@@ -1,0 +1,12 @@
+# Drone Follow System Dependencies
+fastapi>=0.110.0
+uvicorn>=0.28.0
+websockets>=12.0
+opencv-python>=4.8.0
+mediapipe>=0.10.0
+numpy>=1.24.0
+scipy>=1.11.0
+djitellopy>=2.5.0
+pydantic>=2.6.0
+python-multipart>=0.0.9
+aiofiles>=23.2.1

@@ -1,0 +1,324 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AERO-FOLLOW 3D | DJI Ryze Tello Aerospace HUD</title>
+  
+  <!-- Modern Aerospace Typography -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;700&family=Orbitron:wght@500;700;900&family=Space+Grotesk:wght@500;700&display=swap" rel="stylesheet">
+  
+  <link rel="stylesheet" href="/src/styles/aerospace.css">
+</head>
+<body>
+  <div id="app">
+    
+    <!-- TOP AEROSPACE HEADER / STATUS BAR -->
+    <header class="hud-header">
+      <div class="brand-section">
+        <div class="brand-logo">
+          <div class="brand-logo-icon">AF</div>
+          <div class="brand-title">
+            <span>AERO-FOLLOW 3D</span>
+            <span class="brand-subtitle">DJI RYZE TELLO AVIONICS</span>
+          </div>
+        </div>
+
+        <div class="system-status-pills">
+          <div class="status-pill">
+            <span id="link-status-dot" class="status-indicator"></span>
+            <span id="link-status-text">LINK: ONLINE (SIM)</span>
+          </div>
+
+          <div class="status-pill" id="mode-switcher-pill" style="cursor: pointer;" title="Click to toggle Drone Wi-Fi vs Simulator">
+            <span class="metric-badge-label" style="margin-right: 4px;">ENGINE:</span>
+            <span id="engine-mode-text" style="color: var(--accent-cyan); font-weight: 600;">SIMULATOR</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Live Top Telemetry Metrics -->
+      <div class="top-telemetry-metrics">
+        <div class="metric-badge">
+          <span class="metric-badge-label">FLIGHT TIME</span>
+          <span id="top-flight-time" class="metric-badge-val">00:00</span>
+        </div>
+
+        <div class="metric-badge">
+          <span class="metric-badge-label">SIGNAL / RSSI</span>
+          <span id="top-wifi-signal" class="metric-badge-val cyan">95%</span>
+        </div>
+
+        <div class="metric-badge">
+          <span class="metric-badge-label">BATTERY</span>
+          <div class="battery-container">
+            <div class="battery-pill-track">
+              <div id="battery-fill-bar" class="battery-pill-fill"></div>
+            </div>
+            <span id="top-battery-val" class="metric-badge-val emerald">94%</span>
+          </div>
+        </div>
+      </div>
+    </header>
+
+    <!-- MAIN HUD WORKSPACE -->
+    <main class="hud-workspace">
+      
+      <!-- Primary Flight Display (PFD) Viewport -->
+      <section class="pfd-container" id="pfd-viewport">
+        <!-- Live Video Stream -->
+        <img id="video-stream-el" class="video-stream-img" src="/api/video_feed" alt="Live Drone Camera Stream">
+
+        <!-- 60 FPS HTML5 Canvas HUD Overlay -->
+        <canvas id="hud-canvas" class="hud-overlay-canvas"></canvas>
+
+        <!-- Aerospace Tactical Corner Accents -->
+        <div class="pfd-corner pfd-corner-tl"></div>
+        <div class="pfd-corner pfd-corner-tr"></div>
+        <div class="pfd-corner pfd-corner-bl"></div>
+        <div class="pfd-corner pfd-corner-br"></div>
+
+        <!-- Floating PFD Status Badges -->
+        <div class="pfd-badge-top-left">
+          <span class="status-indicator"></span>
+          <span id="pfd-fps-text">STREAM: 720p 30FPS</span>
+        </div>
+
+        <div class="pfd-badge-top-right">
+          <div id="pfd-target-status" class="lock-status-badge">
+            <span>TARGET: SCANNING</span>
+          </div>
+        </div>
+      </section>
+
+      <!-- Right Sidebar: 3D Holographic Viewport & Telemetry Matrix -->
+      <aside class="hud-sidebar">
+        
+        <!-- 3D Holographic Target Viewport -->
+        <div class="hud-card hologram-viewport-card">
+          <div class="hud-card-header">
+            <div class="hud-card-title">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path><polyline points="3.27 6.96 12 12.01 20.73 6.96"></polyline><line x1="12" y1="22.08" x2="12" y2="12"></line></svg>
+              <span>3D TARGET HOLOGRAM</span>
+            </div>
+            <span id="holo-angle-badge" class="status-pill" style="padding: 2px 8px; font-size: 9px;">360° SKELETON</span>
+          </div>
+
+          <div id="three-hologram-container">
+            <div class="hologram-overlay-meta">
+              <span id="holo-yaw-readout">YAW: 0.0°</span>
+              <span>ORBIT: DRAG / SCROLL</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Active Target Profile Card -->
+        <div class="hud-card target-profile-card">
+          <div class="hud-card-header">
+            <div class="hud-card-title">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="7" r="4"></circle><path d="M6 21v-2a4 4 0 0 1 4-4h4a4 4 0 0 1 4 4v2"></path></svg>
+              <span>LOCKED TARGET PROFILE</span>
+            </div>
+            <span id="target-conf-pill" class="status-pill" style="padding: 2px 8px; font-size: 9px; color: var(--accent-emerald);">LOCK: 92%</span>
+          </div>
+
+          <div class="target-info-row">
+            <span style="color: var(--text-muted);">SUBJECT:</span>
+            <span id="sidebar-target-name" style="font-weight: 700; color: #fff;">Commander Prime</span>
+          </div>
+
+          <div class="target-info-row">
+            <span style="color: var(--text-muted);">ASPECT / VIEW:</span>
+            <span id="sidebar-target-view" style="color: var(--accent-cyan); font-weight: 600;">FRONT (VISIBLE)</span>
+          </div>
+
+          <div class="target-info-row">
+            <span style="color: var(--text-muted);">COLOR REID:</span>
+            <div class="palette-swatches">
+              <div id="sb-hair-swatch" class="color-swatch-circle" title="Hair/Scalp signature" style="background: #1e293b;"></div>
+              <div id="sb-torso-swatch" class="color-swatch-circle" title="Torso/Shirt signature" style="background: #00f0ff;"></div>
+              <div id="sb-legs-swatch" class="color-swatch-circle" title="Legs/Pants signature" style="background: #0f172a;"></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Telemetry Data Grid -->
+        <div class="hud-card">
+          <div class="hud-card-header">
+            <div class="hud-card-title">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 2 7 12 12 22 7 12 2"></polygon><polyline points="2 17 12 22 22 17"></polyline><polyline points="2 12 12 17 22 12"></polyline></svg>
+              <span>TELEMETRY MATRIX</span>
+            </div>
+          </div>
+
+          <div class="telemetry-grid">
+            <div class="telem-cell">
+              <span class="telem-label">ALTITUDE</span>
+              <span class="telem-val" id="telem-alt">0.0 <span class="telem-unit">m</span></span>
+            </div>
+
+            <div class="telem-cell">
+              <span class="telem-label">EST. DISTANCE</span>
+              <span class="telem-val" id="telem-dist">2.1 <span class="telem-unit">m</span></span>
+            </div>
+
+            <div class="telem-cell">
+              <span class="telem-label">CORE TEMP</span>
+              <span class="telem-val" id="telem-temp">36 <span class="telem-unit">°C</span></span>
+            </div>
+
+            <div class="telem-cell">
+              <span class="telem-label">BAROMETER</span>
+              <span class="telem-val" id="telem-baro">1.2 <span class="telem-unit">m</span></span>
+            </div>
+
+            <div class="telem-cell">
+              <span class="telem-label">ATTITUDE (P/R)</span>
+              <span class="telem-val" id="telem-att" style="font-size: 13px;">0° / 0°</span>
+            </div>
+
+            <div class="telem-cell">
+              <span class="telem-label">PID OUTPUT</span>
+              <span class="telem-val" id="telem-rc" style="font-size: 11px; color: var(--accent-cyan);">RC: 0 0 0 0</span>
+            </div>
+          </div>
+        </div>
+
+      </aside>
+    </main>
+
+    <!-- BOTTOM FLIGHT DIRECTOR & CONTROLS DOCK -->
+    <footer class="hud-footer-dock" id="flight-dock">
+      
+      <!-- Follow Mode Selector -->
+      <div class="follow-modes-group">
+        <button class="mode-btn active" data-mode="LEAD" title="Drone stays ahead of subject (Lead Follow)">
+          <span>LEAD (FRONT)</span>
+        </button>
+        <button class="mode-btn" data-mode="CHASE" title="Drone follows behind subject (Chase Follow)">
+          <span>CHASE (BACK)</span>
+        </button>
+        <button class="mode-btn" data-mode="FLANK_LEFT" title="Drone tracks from left profile">
+          <span>FLANK L (SIDE)</span>
+        </button>
+        <button class="mode-btn" data-mode="FLANK_RIGHT" title="Drone tracks from right profile">
+          <span>FLANK R (SIDE)</span>
+        </button>
+        <button class="mode-btn" data-mode="ORBIT" title="Drone dynamically orbits 360° around subject">
+          <span>ORBIT (360°)</span>
+        </button>
+      </div>
+
+      <!-- Center Action Group: Scan & Follow Lock -->
+      <div class="center-action-group">
+        <button id="btn-open-scan-modal" class="btn-primary-action">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 7V4h3"></path><path d="M20 7V4h-3"></path><path d="M4 17v3h3"></path><path d="M20 17v3h-3"></path><circle cx="12" cy="12" r="3"></circle></svg>
+          <span>3D SCAN & RE-ID</span>
+        </button>
+
+        <button id="btn-toggle-follow" class="btn-toggle-follow">
+          <span class="status-indicator amber"></span>
+          <span>ENGAGE 3D FOLLOW</span>
+        </button>
+      </div>
+
+      <!-- Flight Safety Action Group -->
+      <div class="center-action-group">
+        <button id="btn-takeoff" class="btn-secondary" style="color: var(--accent-cyan); border-color: rgba(0, 240, 255, 0.4);" title="Spacebar shortcut">
+          <span>TAKEOFF [SPACE]</span>
+        </button>
+
+        <button id="btn-land" class="btn-secondary" style="color: var(--accent-amber); border-color: rgba(255, 170, 0, 0.4);" title="L key shortcut">
+          <span>LAND [L]</span>
+        </button>
+
+        <button id="btn-emergency" class="btn-danger-action" title="Escape key shortcut">
+          <span>KILL [ESC]</span>
+        </button>
+      </div>
+    </footer>
+
+    <!-- 3D SCAN & BIOMETRIC REGISTRATION MODAL WIZARD -->
+    <div id="scan-modal" class="modal-backdrop">
+      <div class="scan-wizard-card">
+        
+        <div class="wizard-header">
+          <div>
+            <div class="wizard-title">3D BIOMETRIC ACQUISITION & TARGET LOCK</div>
+            <div class="wizard-subtitle">360° OMNI-ANGLE RE-IDENTIFICATION ENGINE</div>
+          </div>
+          <button id="modal-close-btn" class="btn-secondary" style="padding: 4px 12px;">✕</button>
+        </div>
+
+        <div class="wizard-step-progress">
+          <div class="progress-step-pill active"></div>
+          <div class="progress-step-pill active"></div>
+          <div class="progress-step-pill active"></div>
+        </div>
+
+        <div style="display: flex; align-items: center; gap: 12px;">
+          <label style="font-family: var(--font-mono); font-size: 11px; color: var(--text-muted);">TARGET IDENTIFIER:</label>
+          <input id="target-name-input" type="text" value="Commander Prime" style="background: var(--bg-glass-card); border: 1px solid var(--border-subtle); color: #fff; padding: 6px 12px; border-radius: 6px; font-family: var(--font-mono); font-size: 12px; outline: none; width: 220px;">
+        </div>
+
+        <div class="wizard-content-layout">
+          
+          <!-- Interactive 3D Scan Hologram View -->
+          <div class="wizard-3d-preview-box">
+            <div id="wizard-three-container"></div>
+          </div>
+
+          <!-- Biometrics Breakdown Panel -->
+          <div class="wizard-biometrics-panel">
+            <div class="biometric-metric-row">
+              <span style="color: var(--text-muted);">SCAN ORIENTATION:</span>
+              <span id="bio-orientation" style="color: var(--accent-cyan); font-weight: 700;">FRONT (0.0° YAW)</span>
+            </div>
+
+            <div class="biometric-metric-row">
+              <span style="color: var(--text-muted);">FACIAL BIOMETRICS:</span>
+              <span id="bio-face-status" style="color: var(--accent-emerald); font-weight: 600;">128D VECTOR ENCODED</span>
+            </div>
+
+            <div class="biometric-metric-row">
+              <span style="color: var(--text-muted);">ANATOMICAL PROPORTIONS:</span>
+              <span id="bio-proportions">S/H: 1.15 | T/L: 0.68</span>
+            </div>
+
+            <div class="biometric-metric-row">
+              <span style="color: var(--text-muted);">ESTIMATED METRIC HEIGHT:</span>
+              <span id="bio-height">1.78m</span>
+            </div>
+
+            <div class="biometric-metric-row">
+              <span style="color: var(--text-muted);">MULTI-SEGMENT COLOR PALETTE:</span>
+              <div class="palette-swatches">
+                <div id="bio-hair-swatch" class="color-swatch-circle" title="Hair" style="background: #1e293b;"></div>
+                <div id="bio-torso-swatch" class="color-swatch-circle" title="Torso" style="background: #00f0ff;"></div>
+                <div id="bio-legs-swatch" class="color-swatch-circle" title="Legs" style="background: #0f172a;"></div>
+              </div>
+            </div>
+          </div>
+
+        </div>
+
+        <div class="wizard-actions-bar">
+          <button id="modal-rescan-btn" class="btn-secondary">
+            <span>RE-SCAN SUBJECT</span>
+          </button>
+
+          <button id="modal-confirm-lock-btn" class="btn-confirm-lock">
+            <span>CONFIRM 3D TARGET LOCK</span>
+          </button>
+        </div>
+
+      </div>
+    </div>
+
+  </div>
+
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>
