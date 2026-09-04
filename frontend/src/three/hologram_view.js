@@ -1,6 +1,7 @@
 /**
- * Three.js Minimalist 3D Holographic Viewport.
- * Renders rotating monochromatic 3D point cloud & skeletal wireframe of the tracked person.
+ * Three.js Pro 3D Holographic Viewport.
+ * Renders fluidly-interpolated 3D skeletal wireframe, head volume, torso plane,
+ * dynamic ground projection shadow, and concentric metric distance rings.
  */
 import * as THREE from 'three';
 
@@ -35,11 +36,14 @@ export class Hologram3DView {
     this.subjectGroup = new THREE.Group();
     this.scene.add(this.subjectGroup);
 
-    // Skeleton joints and bones collections
+    // Skeleton joints, target positions (for lerp), and bones
     this.jointMeshes = [];
+    this.targetPositions = [];
     this.boneLines = [];
 
-    // Orientation indicator arrow
+    // Anatomical Volumes
+    this.headWireframe = null;
+    this.groundShadow = null;
     this.directionArrow = null;
 
     // Orbit control state (manual mouse dragging)
@@ -53,26 +57,44 @@ export class Hologram3DView {
   }
 
   _initScene() {
-    // 1. Monochromatic White Lights
-    const ambientLight = new THREE.AmbientLight(0xffffff, 1.2);
+    // 1. Ambient & Directional Lights
+    const ambientLight = new THREE.AmbientLight(0xffffff, 1.4);
     this.scene.add(ambientLight);
 
-    const whiteLight = new THREE.PointLight(0xffffff, 2.0, 10);
+    const whiteLight = new THREE.PointLight(0xffffff, 2.5, 10);
     whiteLight.position.set(2, 3, 2);
     this.scene.add(whiteLight);
 
-    // 2. Minimalist Monotone Floor Grid
-    const gridHelper = new THREE.GridHelper(3.5, 14, 0x52525b, 0x27272a);
+    // 2. Coordinate Floor Grid
+    const gridHelper = new THREE.GridHelper(3.6, 14, 0x52525b, 0x27272a);
     gridHelper.position.y = -0.9;
     this.scene.add(gridHelper);
 
-    // 3. Directional Heading Arrow (Minimalist White)
+    // Concentric Metric Range Rings on floor (1m, 2m, 3m)
+    [0.7, 1.4, 2.1].forEach((r) => {
+      const ringGeo = new THREE.RingGeometry(r - 0.005, r + 0.005, 32);
+      const ringMat = new THREE.MeshBasicMaterial({ color: 0x3f3f46, side: THREE.DoubleSide });
+      const ring = new THREE.Mesh(ringGeo, ringMat);
+      ring.rotation.x = Math.PI / 2;
+      ring.position.y = -0.899;
+      this.scene.add(ring);
+    });
+
+    // 3. Ground Projection Shadow Ring
+    const shadowGeo = new THREE.RingGeometry(0.18, 0.22, 24);
+    const shadowMat = new THREE.MeshBasicMaterial({ color: 0xffffff, side: THREE.DoubleSide, transparent: true, opacity: 0.45 });
+    this.groundShadow = new THREE.Mesh(shadowGeo, shadowMat);
+    this.groundShadow.rotation.x = Math.PI / 2;
+    this.groundShadow.position.y = -0.898;
+    this.scene.add(this.groundShadow);
+
+    // 4. Directional Heading Arrow
     const dir = new THREE.Vector3(0, 0, -1);
     const origin = new THREE.Vector3(0, -0.85, 0);
     this.directionArrow = new THREE.ArrowHelper(dir, origin, 0.6, 0xffffff, 0.12, 0.06);
     this.scene.add(this.directionArrow);
 
-    // 4. Default 3D Skeleton Points and Connecting Bones
+    // 5. Build Default Skeleton & Volumes
     this._buildDefaultSkeleton();
   }
 
@@ -81,10 +103,11 @@ export class Hologram3DView {
       this.subjectGroup.remove(this.subjectGroup.children[0]);
     }
     this.jointMeshes = [];
+    this.targetPositions = [];
     this.boneLines = [];
 
-    // Joint geometry (Clean White)
-    const sphereGeo = new THREE.SphereGeometry(0.04, 16, 16);
+    // Joint geometry
+    const sphereGeo = new THREE.SphereGeometry(0.038, 16, 16);
     const jointMat = new THREE.MeshStandardMaterial({
       color: 0xffffff,
       roughness: 0.2
@@ -95,14 +118,15 @@ export class Hologram3DView {
       mesh.visible = false;
       this.subjectGroup.add(mesh);
       this.jointMeshes.push(mesh);
+      this.targetPositions.push(new THREE.Vector3(0, 0, 0));
     }
 
-    // Bone Line Segments (Clean Translucent White)
+    // Bone Line Segments
     const lineMat = new THREE.LineBasicMaterial({
       color: 0xffffff,
       linewidth: 1.5,
       transparent: true,
-      opacity: 0.6
+      opacity: 0.65
     });
 
     POSE_CONNECTIONS.forEach(() => {
@@ -115,6 +139,18 @@ export class Hologram3DView {
       this.subjectGroup.add(line);
       this.boneLines.push(line);
     });
+
+    // Head Volume Wireframe Sphere
+    const headGeo = new THREE.SphereGeometry(0.12, 8, 8);
+    const headMat = new THREE.MeshBasicMaterial({
+      color: 0xffffff,
+      wireframe: true,
+      transparent: true,
+      opacity: 0.35
+    });
+    this.headWireframe = new THREE.Mesh(headGeo, headMat);
+    this.headWireframe.visible = false;
+    this.subjectGroup.add(this.headWireframe);
   }
 
   updateFromLandmarks(landmarks3d, yawDeg = 0) {
@@ -127,40 +163,30 @@ export class Hologram3DView {
       hipCz = (landmarks3d[23].z + landmarks3d[24].z) / 2.0;
     }
 
+    // Update target positions for lerp
     landmarks3d.forEach((lm, idx) => {
-      if (idx < this.jointMeshes.length) {
-        const mesh = this.jointMeshes[idx];
+      if (idx < this.targetPositions.length) {
         if (lm.visibility > 0.25) {
-          mesh.visible = true;
-          mesh.position.set(
+          this.targetPositions[idx].set(
             -(lm.x - hipCx) * 1.5,
             -(lm.y - hipCy) * 1.5,
             -(lm.z - hipCz) * 1.5
           );
+          this.jointMeshes[idx].visible = true;
         } else {
-          mesh.visible = false;
+          this.jointMeshes[idx].visible = false;
         }
       }
     });
 
-    POSE_CONNECTIONS.forEach(([iA, iB], lineIdx) => {
-      if (lineIdx < this.boneLines.length && iA < this.jointMeshes.length && iB < this.jointMeshes.length) {
-        const meshA = this.jointMeshes[iA];
-        const meshB = this.jointMeshes[iB];
-        const line = this.boneLines[lineIdx];
+    // Update Head wireframe target
+    if (this.headWireframe && landmarks3d.length > 0) {
+      const noseTarget = this.targetPositions[0];
+      this.headWireframe.position.copy(noseTarget);
+      this.headWireframe.visible = true;
+    }
 
-        if (meshA.visible && meshB.visible) {
-          line.visible = true;
-          const posAttr = line.geometry.attributes.position;
-          posAttr.setXYZ(0, meshA.position.x, meshA.position.y, meshA.position.z);
-          posAttr.setXYZ(1, meshB.position.x, meshB.position.y, meshB.position.z);
-          posAttr.needsUpdate = true;
-        } else {
-          line.visible = false;
-        }
-      }
-    });
-
+    // Update Orientation arrow
     if (this.directionArrow) {
       const rad = (yawDeg * Math.PI) / 180;
       const dirVec = new THREE.Vector3(Math.sin(rad), 0, -Math.cos(rad));
@@ -197,12 +223,40 @@ export class Hologram3DView {
   _animate() {
     requestAnimationFrame(() => this._animate());
 
+    // Gentle auto-rotation when not dragging
     if (!this.isDragging) {
       this.rotation.y += 0.004;
     }
 
     this.subjectGroup.rotation.y = this.rotation.y;
     this.subjectGroup.rotation.x = this.rotation.x;
+
+    // Smooth Lerp Interpolation for joint meshes (elimates jitter)
+    const lerpFactor = 0.35;
+    for (let i = 0; i < this.jointMeshes.length; i++) {
+      if (this.jointMeshes[i].visible) {
+        this.jointMeshes[i].position.lerp(this.targetPositions[i], lerpFactor);
+      }
+    }
+
+    // Update connecting bone lines
+    POSE_CONNECTIONS.forEach(([iA, iB], lineIdx) => {
+      if (lineIdx < this.boneLines.length && iA < this.jointMeshes.length && iB < this.jointMeshes.length) {
+        const meshA = this.jointMeshes[iA];
+        const meshB = this.jointMeshes[iB];
+        const line = this.boneLines[lineIdx];
+
+        if (meshA.visible && meshB.visible) {
+          line.visible = true;
+          const posAttr = line.geometry.attributes.position;
+          posAttr.setXYZ(0, meshA.position.x, meshA.position.y, meshA.position.z);
+          posAttr.setXYZ(1, meshB.position.x, meshB.position.y, meshB.position.z);
+          posAttr.needsUpdate = true;
+        } else {
+          line.visible = false;
+        }
+      }
+    });
 
     this.renderer.render(this.scene, this.camera);
   }

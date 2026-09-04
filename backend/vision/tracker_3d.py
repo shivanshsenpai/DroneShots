@@ -1,7 +1,7 @@
 """
 Unified 3D Multi-Angle Target Tracking Engine.
-Fuses 3D Pose, Facial Biometrics, and Multi-Segment Appearance ReID to maintain continuous
-target lock from Front, Back, Left/Right Side, and Overhead views.
+Fuses 3D Pose, Facial Biometrics, and Multi-Segment Appearance ReID with
+Centroid Velocity Estimation, Trajectory Breadcrumbs, and Continuous Profile Learning.
 """
 import time
 import cv2
@@ -29,7 +29,12 @@ class UnifiedTracker3D:
         self.is_locked: bool = False
         self.last_seen_timestamp: float = 0.0
         self.lock_confidence: float = 0.0
-        self.tracking_history: List[Dict[str, Any]] = []
+
+        # Trajectory & Velocity Tracking
+        self.prev_centroid: Optional[Tuple[float, float, float]] = None  # (cx, cy, timestamp)
+        self.target_velocity_px_s: Tuple[float, float] = (0.0, 0.0)      # (vx, vy) in screen ratio per second
+        self.target_speed_mps: float = 0.0                              # estimated target real-world speed m/s
+        self.trajectory_breadcrumbs: List[Dict[str, float]] = []        # list of {x, y, t}
 
     def set_locked_target(self, profile: Optional[Dict[str, Any]]) -> None:
         """Sets or clears the active target profile to follow."""
@@ -37,6 +42,10 @@ class UnifiedTracker3D:
         self.is_locked = profile is not None
         if not self.is_locked:
             self.lock_confidence = 0.0
+        self.trajectory_breadcrumbs.clear()
+        self.prev_centroid = None
+        self.target_velocity_px_s = (0.0, 0.0)
+        self.target_speed_mps = 0.0
 
     def generate_scan_profile(self, frame_bgr: np.ndarray, name: str = "Subject Alpha") -> Optional[Dict[str, Any]]:
         """
@@ -77,7 +86,7 @@ class UnifiedTracker3D:
         Processes the live drone frame:
         1. Estimates 3D pose & orientation.
         2. If target is locked, evaluates multi-angle match confidence.
-        3. Computes target center offset (dx, dy) and estimated metric distance.
+        3. Computes target center offset (dx, dy), estimated metric distance, velocity, and breadcrumbs.
         """
         h, w, c = frame_bgr.shape
         now = time.time()
@@ -95,14 +104,16 @@ class UnifiedTracker3D:
             "bbox_normalized": None,
             "bbox_area_ratio": 0.0,
             "center": [0.5, 0.5],
-            "offset_x": 0.0,  # Range -0.5 (left) to +0.5 (right)
-            "offset_y": 0.0,  # Range -0.5 (top) to +0.5 (bottom)
+            "offset_x": 0.0,
+            "offset_y": 0.0,
             "estimated_distance_m": 0.0,
             "landmarks_3d_world": None,
             "landmarks_2d": None,
             "color_palette": None,
             "is_locked": self.is_locked,
-            "time_since_last_seen": now - self.last_seen_timestamp if self.last_seen_timestamp > 0 else 999.0
+            "time_since_last_seen": now - self.last_seen_timestamp if self.last_seen_timestamp > 0 else 999.0,
+            "velocity": {"vx": 0.0, "vy": 0.0, "speed_mps": 0.0},
+            "trajectory": []
         }
 
         if not pose_data:
@@ -125,10 +136,41 @@ class UnifiedTracker3D:
         result["offset_y"] = float(cy - 0.45)
 
         # Estimate distance in meters using vertical height ratio & focal heuristic
-        # Typical human height ~ 1.7m, drone focal length ~ 900px
         bbox_h_px = max(10, pose_data["bbox"][3])
         estimated_dist = (1.70 * 650.0) / (bbox_h_px + 1e-6)
-        result["estimated_distance_m"] = float(np.clip(estimated_dist, 0.4, 8.0))
+        dist_m = float(np.clip(estimated_dist, 0.4, 8.0))
+        result["estimated_distance_m"] = dist_m
+
+        # Compute Velocity & Trajectory Breadcrumbs
+        if self.prev_centroid is not None:
+            pcx, pcy, pt = self.prev_centroid
+            dt = max(0.001, now - pt)
+            vx = (cx - pcx) / dt
+            vy = (cy - pcy) / dt
+            # Smooth velocity filter
+            alpha = 0.6
+            self.target_velocity_px_s = (
+                alpha * self.target_velocity_px_s[0] + (1 - alpha) * vx,
+                alpha * self.target_velocity_px_s[1] + (1 - alpha) * vy
+            )
+            # Estimate metric speed in m/s (using distance & horizontal field of view)
+            fov_width_m = 2.0 * dist_m * np.tan(np.radians(82.6 / 2.0))
+            metric_speed = np.sqrt((vx * fov_width_m)**2 + (vy * fov_width_m * 0.75)**2)
+            self.target_speed_mps = float(np.clip(metric_speed, 0.0, 10.0))
+
+        self.prev_centroid = (cx, cy, now)
+
+        # Update rolling trajectory breadcrumbs (keep max 18 points)
+        self.trajectory_breadcrumbs.append({"x": cx, "y": cy, "t": now})
+        if len(self.trajectory_breadcrumbs) > 18:
+            self.trajectory_breadcrumbs.pop(0)
+
+        result["velocity"] = {
+            "vx": float(round(self.target_velocity_px_s[0], 3)),
+            "vy": float(round(self.target_velocity_px_s[1], 3)),
+            "speed_mps": float(round(self.target_speed_mps, 2))
+        }
+        result["trajectory"] = [{"x": p["x"], "y": p["y"]} for p in self.trajectory_breadcrumbs]
 
         # Extract current appearance and face
         segments = pose_data["segments"]
@@ -146,15 +188,32 @@ class UnifiedTracker3D:
                 result["target_matched"] = True
                 self.last_seen_timestamp = now
                 self.lock_confidence = match_score
+
+                # Continuous Profile Refinement:
+                # If high confidence (> 0.88), gently update appearance profile to adapt to lighting changes
+                if match_score > 0.88 and current_appearance.get("torso_signature"):
+                    self._enrich_profile(current_appearance)
             else:
                 result["target_matched"] = False
         else:
-            # If no target locked yet, treat detected subject as visible candidate with base confidence
             result["target_matched"] = True
             result["confidence"] = 0.85
             self.last_seen_timestamp = now
 
         return result
+
+    def _enrich_profile(self, current_app: Dict[str, Any]):
+        """Gently adapts registered color signature to lighting fluctuations."""
+        try:
+            if not self.locked_profile or not current_app: return
+            alpha = 0.95  # Retain 95% of original, 5% of current
+            if "torso_signature" in self.locked_profile and current_app.get("torso_signature"):
+                t_old = np.array(self.locked_profile["torso_signature"])
+                t_new = np.array(current_app["torso_signature"])
+                t_fused = (alpha * t_old + (1 - alpha) * t_new)
+                self.locked_profile["torso_signature"] = t_fused.tolist()
+        except Exception:
+            pass
 
     def _compute_multi_angle_match(
         self,
@@ -189,13 +248,10 @@ class UnifiedTracker3D:
 
         # Adaptive multi-angle weighting
         if face_evaluated and face_score > 0.4:
-            # Front/Angle with visible face
             total_score = (0.35 * face_score) + (0.45 * appearance_score) + (0.20 * prop_score)
         elif orientation == "BACK":
-            # Back view: heavier weight on torso/hair ReID & body proportions
             total_score = (0.70 * appearance_score) + (0.30 * prop_score)
         else:
-            # Side profile or partial occlusion
             total_score = (0.60 * appearance_score) + (0.40 * prop_score)
 
         return float(np.clip(total_score, 0.0, 1.0))

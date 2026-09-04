@@ -1,7 +1,7 @@
 /**
- * 60 FPS Minimalist HUD Canvas Engine.
- * Renders Pitch Ladder, Artificial Horizon, Heading Ribbon, Target Reticle,
- * and Calipers with a clean, monotonous monochrome aesthetic.
+ * 60 FPS Tactical Minimalist HUD Canvas Engine (Pro Edition).
+ * Renders Heading Ribbon, Artificial Horizon, Dynamic Target Reticle,
+ * Velocity Lead Vector, Trajectory Breadcrumbs, and Proximity Range Ring.
  */
 
 export class HudCanvasEngine {
@@ -20,6 +20,9 @@ export class HudCanvasEngine {
     };
     this.tracking = null;
     this.autonomousActive = false;
+
+    // Smoothed target render coordinates to prevent visual jitter
+    this.smoothBox = null;
 
     // Resize handling
     this.resize();
@@ -61,19 +64,18 @@ export class HudCanvasEngine {
     const h = this.height;
 
     ctx.clearRect(0, 0, w, h);
-
     if (w === 0 || h === 0) return;
 
-    // 1. Draw Top Heading Compass Ribbon
+    // 1. Draw Heading Ribbon & Roll Bank Index at top
     this._drawCompassRibbon(ctx, w, h);
 
     // 2. Draw Center Aircraft Reticle & Artificial Horizon Pitch Ladder
     this._drawPitchLadder(ctx, w, h);
 
-    // 3. Draw Target Lock Brackets & Biometric Calipers
+    // 3. Draw Trajectory Trail & Target Lock Brackets + Velocity Vector
     this._drawTargetLock(ctx, w, h);
 
-    // 4. Draw Altitude & Speed Tapes
+    // 4. Draw Altitude Tape
     this._drawAltitudeTape(ctx, w, h);
   }
 
@@ -81,11 +83,11 @@ export class HudCanvasEngine {
     const yaw = (this.telemetry.yaw_deg || 0) % 360;
     const normalizedYaw = yaw < 0 ? yaw + 360 : yaw;
     const ribbonY = 22;
-    const ribbonW = Math.min(280, w * 0.45);
+    const ribbonW = Math.min(300, w * 0.48);
     const startX = (w - ribbonW) / 2;
 
     ctx.save();
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.2)';
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.25)';
     ctx.lineWidth = 1;
     ctx.beginPath();
     ctx.moveTo(startX, ribbonY);
@@ -104,7 +106,7 @@ export class HudCanvasEngine {
     // Heading markings
     ctx.font = '9px "JetBrains Mono", monospace';
     ctx.textAlign = 'center';
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.6)';
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.65)';
 
     for (let deg = -40; deg <= 40; deg += 10) {
       const currentDeg = Math.round((normalizedYaw + deg + 360) % 360);
@@ -140,8 +142,16 @@ export class HudCanvasEngine {
     ctx.translate(cx, cy);
     ctx.rotate(-rollRad);
 
-    // Center Bore Sight Aircraft Reticle (Minimal White)
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.85)';
+    // Dynamic Horizon Line
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.12)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(-w * 0.35, 0);
+    ctx.lineTo(w * 0.35, 0);
+    ctx.stroke();
+
+    // Center Bore Sight Aircraft Reticle
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.9)';
     ctx.lineWidth = 1.5;
     ctx.beginPath();
     // Left wing
@@ -165,7 +175,7 @@ export class HudCanvasEngine {
       if (p === 0) continue;
       const rungY = - (p - pitch) * pitchScale;
       if (Math.abs(rungY) < 130) {
-        ctx.strokeStyle = 'rgba(255, 255, 255, 0.3)';
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.28)';
         ctx.lineWidth = 1;
         ctx.beginPath();
         // Left rung
@@ -186,15 +196,33 @@ export class HudCanvasEngine {
   }
 
   _drawTargetLock(ctx, w, h) {
-    if (!this.tracking || !this.tracking.target_detected) return;
+    if (!this.tracking || !this.tracking.target_detected) {
+      this.smoothBox = null;
+      return;
+    }
 
     const bboxNorm = this.tracking.bbox_normalized;
     if (!bboxNorm) return;
 
-    const bx = bboxNorm[0] * w;
-    const by = bboxNorm[1] * h;
-    const bw = bboxNorm[2] * w;
-    const bh = bboxNorm[3] * h;
+    const targetBx = bboxNorm[0] * w;
+    const targetBy = bboxNorm[1] * h;
+    const targetBw = bboxNorm[2] * w;
+    const targetBh = bboxNorm[3] * h;
+
+    // Exponential smoothing on box coordinates to prevent camera jitter
+    if (!this.smoothBox) {
+      this.smoothBox = { bx: targetBx, by: targetBy, bw: targetBw, bh: targetBh };
+    } else {
+      const alpha = 0.4;
+      this.smoothBox.bx = this.smoothBox.bx + alpha * (targetBx - this.smoothBox.bx);
+      this.smoothBox.by = this.smoothBox.by + alpha * (targetBy - this.smoothBox.by);
+      this.smoothBox.bw = this.smoothBox.bw + alpha * (targetBw - this.smoothBox.bw);
+      this.smoothBox.bh = this.smoothBox.bh + alpha * (targetBh - this.smoothBox.bh);
+    }
+
+    const { bx, by, bw, bh } = this.smoothBox;
+    const tcx = bx + bw / 2;
+    const tcy = by + bh / 2;
 
     const isMatched = this.tracking.target_matched;
     const conf = Math.round((this.tracking.confidence || 0) * 100);
@@ -202,7 +230,57 @@ export class HudCanvasEngine {
 
     ctx.save();
 
-    // 1. Bracket Corners (Minimalist Monochrome)
+    // 1. Draw Trajectory Breadcrumbs Trail
+    if (this.tracking.trajectory && this.tracking.trajectory.length > 1) {
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.2)';
+      ctx.lineWidth = 1;
+      ctx.setLineDash([2, 4]);
+      ctx.beginPath();
+      this.tracking.trajectory.forEach((pt, idx) => {
+        const px = pt.x * w;
+        const py = pt.y * h;
+        if (idx === 0) ctx.moveTo(px, py);
+        else ctx.lineTo(px, py);
+      });
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+
+    // 2. Proximity Range Circle
+    const dist = (this.tracking.estimated_distance_m || 2.0);
+    const radius = Math.max(bw, bh) * 0.58;
+    ctx.strokeStyle = dist < 1.0 ? 'rgba(255, 255, 255, 0.65)' : 'rgba(255, 255, 255, 0.18)';
+    ctx.lineWidth = 1;
+    ctx.setLineDash([3, 5]);
+    ctx.beginPath();
+    ctx.arc(tcx, tcy, radius, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    // 3. Dynamic Velocity Lead Vector Arrow
+    const vel = this.tracking.velocity;
+    if (vel && (Math.abs(vel.vx) > 0.02 || Math.abs(vel.vy) > 0.02)) {
+      const vx = vel.vx * w * 0.4;
+      const vy = vel.vy * h * 0.4;
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.moveTo(tcx, tcy);
+      ctx.lineTo(tcx + vx, tcy + vy);
+      ctx.stroke();
+
+      // Small arrowhead
+      const angle = Math.atan2(vy, vx);
+      ctx.fillStyle = '#ffffff';
+      ctx.beginPath();
+      ctx.moveTo(tcx + vx, tcy + vy);
+      ctx.lineTo(tcx + vx - 6 * Math.cos(angle - Math.PI / 6), tcy + vy - 6 * Math.sin(angle - Math.PI / 6));
+      ctx.lineTo(tcx + vx - 6 * Math.cos(angle + Math.PI / 6), tcy + vy - 6 * Math.sin(angle + Math.PI / 6));
+      ctx.closePath();
+      ctx.fill();
+    }
+
+    // 4. Bracket Corners
     const bracketLen = Math.min(20, bw * 0.22, bh * 0.22);
     ctx.strokeStyle = color;
     ctx.lineWidth = 1.5;
@@ -235,10 +313,8 @@ export class HudCanvasEngine {
     ctx.lineTo(bx + bw, by + bh - bracketLen);
     ctx.stroke();
 
-    // 2. Subtle target center cross
-    const tcx = bx + bw / 2;
-    const tcy = by + bh / 2;
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.25)';
+    // Center cross
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.3)';
     ctx.lineWidth = 1;
     ctx.beginPath();
     ctx.moveTo(tcx - 6, tcy);
@@ -247,7 +323,7 @@ export class HudCanvasEngine {
     ctx.lineTo(tcx, tcy + 6);
     ctx.stroke();
 
-    // 3. Lead Vector
+    // Autonomous Follow Lead Line
     if (this.autonomousActive) {
       ctx.strokeStyle = 'rgba(255, 255, 255, 0.4)';
       ctx.setLineDash([3, 3]);
@@ -258,9 +334,9 @@ export class HudCanvasEngine {
       ctx.setLineDash([]);
     }
 
-    // 4. Floating HUD Tag Badges
+    // 5. Floating HUD Badges
     const orient = this.tracking.orientation || 'FRONT';
-    const dist = (this.tracking.estimated_distance_m || 2.0).toFixed(1);
+    const speedStr = vel ? `${vel.speed_mps.toFixed(1)}m/s` : '0.0m/s';
 
     // Top Badge
     ctx.fillStyle = 'rgba(15, 17, 23, 0.9)';
@@ -277,13 +353,13 @@ export class HudCanvasEngine {
     const botY = by + bh + 4;
     if (botY < h - 18) {
       ctx.fillStyle = 'rgba(15, 17, 23, 0.9)';
-      ctx.fillRect(bx, botY, 100, 16);
+      ctx.fillRect(bx, botY, 130, 16);
       ctx.strokeStyle = 'rgba(255, 255, 255, 0.15)';
-      ctx.strokeRect(bx, botY, 100, 16);
+      ctx.strokeRect(bx, botY, 130, 16);
 
       ctx.font = '8px "JetBrains Mono", monospace';
-      ctx.fillStyle = 'rgba(255, 255, 255, 0.8)';
-      ctx.fillText(`DIST: ${dist}m (${conf}%)`, bx + 5, botY + 11);
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.85)';
+      ctx.fillText(`RNG: ${dist.toFixed(1)}m | ${speedStr} (${conf}%)`, bx + 5, botY + 11);
     }
 
     ctx.restore();

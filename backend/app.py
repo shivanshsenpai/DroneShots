@@ -222,6 +222,40 @@ def delete_profile(profile_id: str):
     return {"status": "deleted" if success else "failed"}
 
 
+class FollowSettingsRequest(BaseModel):
+    mode: Optional[str] = None
+    target_distance_m: Optional[float] = None
+    target_altitude_m: Optional[float] = None
+    kp_yaw: Optional[float] = None
+    kd_yaw: Optional[float] = None
+    kp_pitch: Optional[float] = None
+    kd_pitch: Optional[float] = None
+    kp_throttle: Optional[float] = None
+    kd_throttle: Optional[float] = None
+
+@app.post("/api/settings/follow")
+def update_follow_settings(req: FollowSettingsRequest):
+    """Updates follow mode, setpoint distance/altitude, and PID gains."""
+    if req.mode:
+        pid_controller.set_mode(req.mode)
+    pid_controller.set_parameters(req.target_distance_m, req.target_altitude_m)
+    gains = {}
+    if req.kp_yaw is not None: gains["kp_yaw"] = req.kp_yaw
+    if req.kd_yaw is not None: gains["kd_yaw"] = req.kd_yaw
+    if req.kp_pitch is not None: gains["kp_pitch"] = req.kp_pitch
+    if req.kd_pitch is not None: gains["kd_pitch"] = req.kd_pitch
+    if req.kp_throttle is not None: gains["kp_throttle"] = req.kp_throttle
+    if req.kd_throttle is not None: gains["kd_throttle"] = req.kd_throttle
+    if gains:
+        pid_controller.update_gains(gains)
+    return {
+        "status": "updated",
+        "mode": pid_controller.mode,
+        "target_distance_m": pid_controller.target_distance_m,
+        "target_altitude_m": pid_controller.target_altitude_m
+    }
+
+
 class FollowModeRequest(BaseModel):
     mode: str  # "LEAD", "CHASE", "FLANK_LEFT", "FLANK_RIGHT", "ORBIT"
     target_distance_m: Optional[float] = 2.0
@@ -231,7 +265,7 @@ def set_follow_mode(req: FollowModeRequest):
     """Sets follow perspective."""
     pid_controller.set_mode(req.mode)
     if req.target_distance_m:
-        pid_controller.target_distance_m = req.target_distance_m
+        pid_controller.set_parameters(distance_m=req.target_distance_m)
     return {"status": "updated", "mode": pid_controller.mode, "distance_m": pid_controller.target_distance_m}
 
 
@@ -269,6 +303,40 @@ def flight_emergency():
     autonomous_tracking_active = False
     drone_manager.emergency()
     return {"status": "emergency_stop_triggered"}
+
+
+@app.post("/api/flight/flip/{direction}")
+def flight_flip(direction: str):
+    """Performs an acrobatic flip (f, b, l, r)."""
+    if direction.lower() not in ["f", "b", "l", "r"]:
+        raise HTTPException(status_code=400, detail="Direction must be 'f', 'b', 'l', or 'r'")
+    res = drone_manager.flip(direction.lower())
+    return {"status": "success" if res else "failed", "flip": direction.lower()}
+
+
+@app.post("/api/flight/snapshot")
+def capture_snapshot():
+    """Captures and saves a high-res snapshot of current drone camera feed."""
+    frame = drone_manager.get_frame()
+    if frame is None:
+        raise HTTPException(status_code=400, detail="No video frame available")
+
+    snapshots_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "snapshots")
+    os.makedirs(snapshots_dir, exist_ok=True)
+    filename = f"snap_{int(time.time() * 1000)}.jpg"
+    filepath = os.path.join(snapshots_dir, filename)
+
+    # Annotate frame with high-tech timestamp & telemetry watermark
+    annotated = frame.copy()
+    ts = time.strftime("%Y-%m-%d %H:%M:%S")
+    cv2.putText(annotated, f"AERO-FOLLOW 3D // {ts}", (20, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1, cv2.LINE_AA)
+    if current_tracking_data.get("target_detected"):
+        orient = current_tracking_data.get("orientation", "")
+        dist = current_tracking_data.get("estimated_distance_m", 0.0)
+        cv2.putText(annotated, f"TARGET: {orient} | DIST: {dist:.1f}m", (20, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1, cv2.LINE_AA)
+
+    cv2.imwrite(filepath, annotated, [cv2.IMWRITE_JPEG_QUALITY, 95])
+    return {"status": "captured", "filename": filename, "url": f"/snapshots/{filename}"}
 
 
 class ManualRCRequest(BaseModel):
@@ -311,6 +379,11 @@ async def websocket_telemetry(websocket: WebSocket):
         if websocket in active_connections:
             active_connections.remove(websocket)
 
+
+# Serve captured snapshots
+snapshots_dist = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "snapshots")
+os.makedirs(snapshots_dist, exist_ok=True)
+app.mount("/snapshots", StaticFiles(directory=snapshots_dist), name="snapshots")
 
 # Serve built frontend if exists
 frontend_dist = os.path.join(os.path.dirname(os.path.dirname(__file__)), "frontend", "dist")

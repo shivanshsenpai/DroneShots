@@ -241,6 +241,21 @@ class TelloDroneManager:
             self.sim_state["altitude_cm"] = 0
             return True
 
+    def flip(self, direction: str = "f") -> bool:
+        """Flips drone in direction ('f', 'b', 'l', 'r')."""
+        if not self.is_flying:
+            return False
+        if not self.is_simulator and self.drone and self.is_connected:
+            try:
+                self.drone.flip(direction)
+                return True
+            except Exception as e:
+                print(f"[TELLO] Flip error: {e}")
+                return False
+        else:
+            print(f"[TELLO SIM] Simulated flip: {direction}")
+            return True
+
     def emergency(self):
         """Emergency cutoff motors."""
         self.is_flying = False
