@@ -1,14 +1,15 @@
 """
-DJI Ryze Tello Controller with Virtual Drone / Webcam Simulator Failover.
-Provides high-performance frame streaming, smooth RC command transmission,
-and 20Hz telemetry aggregation.
+DJI Ryze Tello Controller with Dual-Source Support:
+1. System Webcam (Integrated / USB Cameras with DirectShow low-latency capture & Virtual Drone simulation)
+2. Physical DJI Ryze Tello Drone (Wi-Fi UDP connection with djitellopy)
 """
 import time
 import math
 import threading
+import socket
 import cv2
 import numpy as np
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 
 try:
     from djitellopy import Tello
@@ -20,24 +21,26 @@ except ImportError:
 class TelloDroneManager:
     def __init__(self):
         self.drone: Optional[Any] = None
+        self.current_source: str = "WEBCAM"  # "WEBCAM" or "DRONE_WIFI"
+        self.camera_index: int = 0
         self.is_connected: bool = False
         self.is_simulator: bool = True
         self.is_flying: bool = False
         self.camera_cap: Optional[cv2.VideoCapture] = None
-        
+
         # Frame buffering
         self.current_frame: Optional[np.ndarray] = None
         self.frame_lock = threading.Lock()
-        self.running = False
+        self.running: bool = False
         self.stream_thread: Optional[threading.Thread] = None
 
-        # Simulated Telemetry State
+        # Simulated Telemetry State (For Webcam / Virtual Flight Mode)
         self.sim_state = {
-            "battery": 94,
+            "battery": 95,
             "altitude_cm": 0,
             "flight_time_sec": 0,
             "temp_c": 36,
-            "wifi_signal": 92,
+            "wifi_signal": 95,
             "pitch_deg": 0.0,
             "roll_deg": 0.0,
             "yaw_deg": 0.0,
@@ -50,71 +53,144 @@ class TelloDroneManager:
         self.sim_start_time = 0.0
         self.last_rc = {"roll": 0, "pitch": 0, "throttle": 0, "yaw": 0}
 
-    def connect(self, prefer_physical: bool = False) -> Dict[str, Any]:
+    @staticmethod
+    def get_available_cameras() -> List[Dict[str, Any]]:
+        """Quickly probes system camera devices (indices 0 to 2) using DirectShow."""
+        found = []
+        for idx in range(3):
+            try:
+                cap = cv2.VideoCapture(idx, cv2.CAP_DSHOW)
+                if cap.isOpened():
+                    found.append({
+                        "index": idx,
+                        "name": f"System Camera {idx}" if idx > 0 else "Integrated / Primary Webcam"
+                    })
+                    cap.release()
+            except Exception:
+                pass
+        return found if found else [{"index": 0, "name": "Primary Webcam"}]
+
+    def set_source(self, source: str, camera_index: int = 0) -> Dict[str, Any]:
         """
-        Attempts to connect to a physical DJI Tello drone over Wi-Fi.
-        If unavailable or if simulator is requested, starts Virtual Drone / Webcam mode.
+        Switches between System Webcam and Physical DJI Tello Drone over Wi-Fi.
         """
+        source_upper = source.upper()
+
+        if source_upper == "DRONE_WIFI":
+            return self._connect_physical_tello()
+        else:
+            return self._connect_webcam(camera_index=camera_index)
+
+    def connect(self, prefer_physical: bool = False, camera_index: int = 0) -> Dict[str, Any]:
+        """Backward-compatible connection trigger."""
+        if prefer_physical:
+            return self.set_source("DRONE_WIFI")
+        return self.set_source("WEBCAM", camera_index=camera_index)
+
+    def _connect_webcam(self, camera_index: int = 0) -> Dict[str, Any]:
+        """Initializes system webcam stream with zero-latency buffer."""
+        print(f"[TELLO_MGR] Initializing System Webcam (Cam {camera_index})...")
         self.stop()
 
-        if prefer_physical and TELLO_AVAILABLE:
-            try:
-                print("[TELLO] Attempting connection to physical DJI Tello...")
-                drone = Tello()
-                drone.connect()
-                drone.streamon()
-                self.drone = drone
-                self.is_connected = True
-                self.is_simulator = False
-                self.running = True
-                self.stream_thread = threading.Thread(target=self._physical_stream_worker, daemon=True)
-                self.stream_thread.start()
-                return {"status": "connected", "mode": "PHYSICAL_TELLO", "battery": drone.get_battery()}
-            except Exception as e:
-                print(f"[TELLO] Physical connection failed ({e}). Falling back to Virtual Simulator...")
-
-        # Fallback to Webcam / Simulator Mode
-        print("[TELLO] Initializing Virtual Drone Simulator & Camera...")
+        self.current_source = "WEBCAM"
+        self.camera_index = camera_index
         self.is_simulator = True
         self.is_connected = True
         self.running = True
         self.sim_start_time = time.time()
 
-        # Try to open webcam (0 or 1)
-        cap = cv2.VideoCapture(0)
+        # Try DirectShow first on Windows for instant initialization without MSMF hang
+        cap = cv2.VideoCapture(camera_index, cv2.CAP_DSHOW)
         if not cap.isOpened():
-            cap = cv2.VideoCapture(1)
+            cap = cv2.VideoCapture(camera_index)
 
         if cap.isOpened():
+            cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
             cap.set(cv2.CAP_PROP_FRAME_WIDTH, 960)
             cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
             cap.set(cv2.CAP_PROP_FPS, 30)
             self.camera_cap = cap
+            print(f"[TELLO_MGR] Webcam {camera_index} opened successfully.")
         else:
+            print(f"[TELLO_MGR] Webcam {camera_index} could not be opened. Using synthetic stream.")
             self.camera_cap = None
 
-        self.stream_thread = threading.Thread(target=self._simulator_stream_worker, daemon=True)
+        self.stream_thread = threading.Thread(target=self._webcam_stream_worker, daemon=True)
         self.stream_thread.start()
 
-        return {"status": "connected", "mode": "SIMULATOR", "battery": self.sim_state["battery"]}
+        return {
+            "status": "connected",
+            "source": "WEBCAM",
+            "camera_index": camera_index,
+            "is_flying": self.is_flying,
+            "battery": int(self.sim_state["battery"]),
+            "message": f"Active: System Webcam {camera_index} (Virtual Flight Simulation Enabled)"
+        }
 
-    def _physical_stream_worker(self):
-        """Worker thread that continuously polls frames from the physical DJI Tello."""
-        frame_reader = self.drone.get_frame_read()
-        while self.running:
-            try:
-                frame = frame_reader.frame
-                if frame is not None:
-                    # Tello frames are usually RGB, convert to BGR for OpenCV processing
-                    frame_bgr = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR) if len(frame.shape) == 3 else frame
-                    with self.frame_lock:
-                        self.current_frame = frame_bgr.copy()
-                time.sleep(0.02)
-            except Exception as e:
-                time.sleep(0.05)
+    def _connect_physical_tello(self) -> Dict[str, Any]:
+        """Attempts to connect to a physical DJI Tello drone over Wi-Fi."""
+        if not TELLO_AVAILABLE:
+            return {
+                "status": "error",
+                "source": self.current_source,
+                "message": "djitellopy library is not available in Python environment."
+            }
 
-    def _simulator_stream_worker(self):
-        """Worker thread for webcam or synthetic HUD generator."""
+        print("[TELLO_MGR] Attempting connection to DJI Ryze Tello via Wi-Fi...")
+        
+        drone = None
+        try:
+            Tello.RESPONSE_TIMEOUT = 2
+            Tello.RETRY_COUNT = 1
+            drone = Tello(retry_count=1)
+            drone.RESPONSE_TIMEOUT = 2
+            drone.connect()
+            drone.streamon()
+        except Exception as e:
+            err_msg = str(e)
+            print(f"[TELLO_MGR] Physical Tello connection failed: {err_msg}")
+            if drone:
+                try:
+                    drone.end()
+                except Exception:
+                    pass
+            
+            # If we were already running webcam, keep webcam alive
+            if not self.running:
+                self._connect_webcam(self.camera_index)
+
+            return {
+                "status": "error",
+                "source": self.current_source,
+                "message": f"Could not reach DJI Tello. Ensure drone is ON and PC Wi-Fi is connected to TELLO-XXXXXX. ({err_msg})",
+                "suggested_action": "Switch to System Webcam or connect Wi-Fi"
+            }
+
+        # Successfully connected to physical drone
+        self.stop()
+        self.drone = drone
+        self.current_source = "DRONE_WIFI"
+        self.is_connected = True
+        self.is_simulator = False
+        self.running = True
+
+        self.stream_thread = threading.Thread(target=self._physical_stream_worker, daemon=True)
+        self.stream_thread.start()
+
+        try:
+            battery = drone.get_battery()
+        except Exception:
+            battery = 100
+
+        return {
+            "status": "connected",
+            "source": "DRONE_WIFI",
+            "battery": battery,
+            "message": "Connected to physical DJI Tello over Wi-Fi!"
+        }
+
+    def _webcam_stream_worker(self):
+        """Worker thread for webcam video feed and simulated drone flight physics."""
         sim_step = 0
         while self.running:
             sim_step += 1
@@ -122,48 +198,66 @@ class TelloDroneManager:
             if self.camera_cap and self.camera_cap.isOpened():
                 ret, cam_frame = self.camera_cap.read()
                 if ret and cam_frame is not None:
-                    frame = cv2.flip(cam_frame, 1)  # Mirror webcam for natural interaction
+                    # Mirror horizontally for natural webcam interaction
+                    frame = cv2.flip(cam_frame, 1)
 
             if frame is None:
-                # Generate high-tech synthetic drone video feed if no webcam
-                frame = self._generate_synthetic_drone_frame(sim_step)
+                # High-tech synthetic fallback frame if webcam is blocked
+                frame = self._generate_synthetic_frame(sim_step)
 
             with self.frame_lock:
                 self.current_frame = frame.copy()
 
-            # Update simulated physics
             self._update_sim_physics()
-            time.sleep(0.033)
+            time.sleep(0.033)  # ~30 FPS
 
-    def _generate_synthetic_drone_frame(self, step: int) -> np.ndarray:
-        """Generates synthetic high-tech grid frame if no camera is available."""
+    def _physical_stream_worker(self):
+        """Worker thread that continuously polls frames from the physical DJI Tello."""
+        try:
+            frame_reader = self.drone.get_frame_read()
+        except Exception as e:
+            print(f"[TELLO_MGR] Frame reader error: {e}")
+            return
+
+        while self.running:
+            try:
+                frame = frame_reader.frame
+                if frame is not None:
+                    frame_bgr = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR) if len(frame.shape) == 3 else frame
+                    with self.frame_lock:
+                        self.current_frame = frame_bgr.copy()
+                time.sleep(0.02)
+            except Exception:
+                time.sleep(0.05)
+
+    def _generate_synthetic_frame(self, step: int) -> np.ndarray:
+        """Draws high-tech cyber calibration grid when no video sensor is available."""
         h, w = 720, 960
         img = np.zeros((h, w, 3), dtype=np.uint8)
-        img[:] = (12, 16, 24)
+        img[:] = (10, 12, 16)
 
-        # Draw tech grid
         grid_size = 40
         offset = (step * 2) % grid_size
         for x in range(0, w, grid_size):
-            cv2.line(img, (x, 0), (x, h), (25, 35, 50), 1)
+            cv2.line(img, (x, 0), (x, h), (24, 28, 36), 1)
         for y in range(0, h, grid_size):
-            cv2.line(img, (0, (y + offset) % h), (w, (y + offset) % h), (25, 35, 50), 1)
+            cv2.line(img, (0, (y + offset) % h), (w, (y + offset) % h), (24, 28, 36), 1)
 
-        # Draw a simulated subject moving gently in 3D
-        cx = int(w * 0.5 + 80 * math.sin(step * 0.03))
-        cy = int(h * 0.45 + 30 * math.cos(step * 0.02))
-        
+        cx = int(w * 0.5 + 70 * math.sin(step * 0.03))
+        cy = int(h * 0.45 + 25 * math.cos(step * 0.02))
+
         # Head
-        cv2.circle(img, (cx, cy - 80), 32, (200, 200, 200), -1)
-        cv2.circle(img, (cx, cy - 80), 32, (0, 240, 255), 2)
+        cv2.circle(img, (cx, cy - 80), 30, (230, 230, 230), -1)
+        cv2.circle(img, (cx, cy - 80), 32, (255, 255, 255), 1)
         # Hair
-        cv2.ellipse(img, (cx, cy - 100), (28, 18), 0, 180, 360, (30, 20, 20), -1)
+        cv2.ellipse(img, (cx, cy - 95), (26, 16), 0, 180, 360, (35, 30, 30), -1)
         # Torso
-        cv2.rectangle(img, (cx - 45, cy - 40), (cx + 45, cy + 60), (255, 140, 0), -1)
+        cv2.rectangle(img, (cx - 40, cy - 40), (cx + 40, cy + 55), (180, 180, 180), -1)
         # Legs
-        cv2.rectangle(img, (cx - 40, cy + 60), (cx - 10, cy + 180), (80, 40, 20), -1)
-        cv2.rectangle(img, (cx + 10, cy + 60), (cx + 40, cy + 180), (80, 40, 20), -1)
+        cv2.rectangle(img, (cx - 35, cy + 55), (cx - 10, cy + 170), (45, 45, 55), -1)
+        cv2.rectangle(img, (cx + 10, cy + 55), (cx + 35, cy + 170), (45, 45, 55), -1)
 
+        cv2.putText(img, "SYNTHETIC TARGET SIMULATION", (w // 2 - 130, h - 30), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (120, 120, 120), 1, cv2.LINE_AA)
         return img
 
     def _update_sim_physics(self):
@@ -176,12 +270,11 @@ class TelloDroneManager:
             self.sim_state["roll_deg"] = 0.0
             return
 
-        # Flight time
         self.sim_state["flight_time_sec"] = int(time.time() - self.sim_start_time)
-        
-        # Slow battery decay
+
+        # Battery slow consumption
         if self.sim_state["battery"] > 10:
-            self.sim_state["battery"] -= 0.003
+            self.sim_state["battery"] -= 0.002
 
         # Altitude reaction to throttle command
         throttle = self.last_rc["throttle"]
@@ -202,14 +295,14 @@ class TelloDroneManager:
         return None
 
     def send_rc_control(self, roll: int, pitch: int, throttle: int, yaw: int):
-        """Sends velocity commands (-100 to 100) to the drone."""
+        """Sends velocity commands (-100 to 100) to the drone or virtual simulation."""
         self.last_rc = {"roll": roll, "pitch": pitch, "throttle": throttle, "yaw": yaw}
 
         if not self.is_simulator and self.drone and self.is_connected:
             try:
                 self.drone.send_rc_control(roll, pitch, throttle, yaw)
             except Exception as e:
-                print(f"[TELLO] Error sending RC command: {e}")
+                print(f"[TELLO_MGR] Error sending RC command: {e}")
 
     def takeoff(self) -> bool:
         """Commands drone to takeoff."""
@@ -219,7 +312,7 @@ class TelloDroneManager:
                 self.drone.takeoff()
                 return True
             except Exception as e:
-                print(f"[TELLO] Takeoff error: {e}")
+                print(f"[TELLO_MGR] Takeoff error: {e}")
                 return False
         else:
             self.sim_state["altitude_cm"] = 120
@@ -235,7 +328,7 @@ class TelloDroneManager:
                 self.drone.land()
                 return True
             except Exception as e:
-                print(f"[TELLO] Land error: {e}")
+                print(f"[TELLO_MGR] Land error: {e}")
                 return False
         else:
             self.sim_state["altitude_cm"] = 0
@@ -250,10 +343,10 @@ class TelloDroneManager:
                 self.drone.flip(direction)
                 return True
             except Exception as e:
-                print(f"[TELLO] Flip error: {e}")
+                print(f"[TELLO_MGR] Flip error: {e}")
                 return False
         else:
-            print(f"[TELLO SIM] Simulated flip: {direction}")
+            print(f"[TELLO_MGR SIM] Simulated flip: {direction}")
             return True
 
     def emergency(self):
@@ -272,6 +365,7 @@ class TelloDroneManager:
             try:
                 return {
                     "connected": True,
+                    "source": "DRONE_WIFI",
                     "mode": "PHYSICAL_TELLO",
                     "is_flying": self.is_flying,
                     "battery": self.drone.get_battery(),
@@ -292,10 +386,12 @@ class TelloDroneManager:
             except Exception:
                 pass
 
-        # Return simulated telemetry
+        # Return simulated telemetry for webcam mode
         return {
             "connected": self.is_connected,
-            "mode": "SIMULATOR" if self.is_simulator else "PHYSICAL_TELLO",
+            "source": self.current_source,
+            "mode": "WEBCAM" if self.current_source == "WEBCAM" else "SIMULATOR",
+            "camera_index": self.camera_index,
             "is_flying": self.is_flying,
             "battery": int(self.sim_state["battery"]),
             "altitude_cm": self.sim_state["altitude_cm"],
@@ -314,13 +410,16 @@ class TelloDroneManager:
         }
 
     def stop(self):
-        """Stops threads and closes camera/drone connections."""
+        """Stops stream threads and releases cameras or drone connections."""
         self.running = False
         if self.stream_thread and self.stream_thread.is_alive():
             self.stream_thread.join(timeout=1.0)
 
         if self.camera_cap:
-            self.camera_cap.release()
+            try:
+                self.camera_cap.release()
+            except Exception:
+                pass
             self.camera_cap = None
 
         if self.drone:

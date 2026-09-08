@@ -64,14 +64,8 @@ class AeroFollowApp {
       });
     }
 
-    // Engine Mode Switcher (Physical Tello vs Simulator)
-    const modePill = document.getElementById('mode-switcher-pill');
-    if (modePill) {
-      modePill.addEventListener('click', () => {
-        soundFX.playClick();
-        this.toggleEngineMode();
-      });
-    }
+    // Dual-Source Selector (Webcam vs DJI Tello Wi-Fi)
+    this._initSourceSelector();
 
     // Snapshot Capture Tool
     const snapBtn = document.getElementById('btn-capture-snapshot');
@@ -104,88 +98,143 @@ class AeroFollowApp {
     }
   }
 
-  _updateAudioIcon() {
-    const unmuted = document.getElementById('audio-icon-unmuted');
-    const muted = document.getElementById('audio-icon-muted');
-    if (unmuted && muted) {
-      if (soundFX.isMuted()) {
-        unmuted.style.display = 'none';
-        muted.style.display = 'block';
-      } else {
-        unmuted.style.display = 'block';
-        muted.style.display = 'none';
-      }
-    }
-  }
+  async _initSourceSelector() {
+    const btnWebcam = document.getElementById('btn-source-webcam');
+    const btnDrone = document.getElementById('btn-source-drone');
+    const selectCam = document.getElementById('select-webcam-index');
+    const telloModal = document.getElementById('tello-alert-modal');
+    const closeTelloBtn = document.getElementById('modal-tello-close-btn');
+    const fallbackWebcamBtn = document.getElementById('btn-tello-fallback-webcam');
+    const retryDroneBtn = document.getElementById('btn-tello-retry-connect');
 
-  _initFollowSliders() {
-    const distSlider = document.getElementById('slider-target-distance');
-    const distVal = document.getElementById('val-target-distance');
-    const altSlider = document.getElementById('slider-target-altitude');
-    const altVal = document.getElementById('val-target-altitude');
-
-    if (distSlider && distVal) {
-      distSlider.addEventListener('input', (e) => {
-        const v = parseFloat(e.target.value);
-        distVal.innerText = `${v.toFixed(1)}m`;
-        fetch('/api/settings/follow', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ target_distance_m: v })
-        }).catch(() => {});
-      });
-    }
-
-    if (altSlider && altVal) {
-      altSlider.addEventListener('input', (e) => {
-        const v = parseFloat(e.target.value);
-        altVal.innerText = `${v.toFixed(1)}m`;
-        fetch('/api/settings/follow', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ target_altitude_m: v })
-        }).catch(() => {});
-      });
-    }
-  }
-
-  async captureSnapshot() {
-    soundFX.playShutter();
-    const flashEl = document.getElementById('shutter-flash-overlay');
-    if (flashEl) {
-      flashEl.classList.add('active');
-      setTimeout(() => flashEl.classList.remove('active'), 120);
-    }
-
+    // Populate available cameras
     try {
-      const res = await fetch('/api/flight/snapshot', { method: 'POST' });
+      const res = await fetch('/api/available_sources');
       const data = await res.json();
-      if (data.status === 'captured') {
-        console.log(`[SNAPSHOT] Saved: ${data.url}`);
+      if (selectCam && Array.isArray(data.cameras) && data.cameras.length > 0) {
+        selectCam.innerHTML = '';
+        data.cameras.forEach(cam => {
+          const opt = document.createElement('option');
+          opt.value = cam.index;
+          opt.innerText = cam.name;
+          selectCam.appendChild(opt);
+        });
+        if (data.camera_index !== undefined) {
+          selectCam.value = data.camera_index;
+        }
       }
     } catch (e) {}
+
+    // Switch to Webcam
+    if (btnWebcam) {
+      btnWebcam.addEventListener('click', () => {
+        soundFX.playClick();
+        const camIdx = selectCam ? parseInt(selectCam.value, 10) : 0;
+        this.setSource('WEBCAM', camIdx);
+      });
+    }
+
+    // Camera index dropdown change
+    if (selectCam) {
+      selectCam.addEventListener('change', () => {
+        soundFX.playClick();
+        const camIdx = parseInt(selectCam.value, 10);
+        this.setSource('WEBCAM', camIdx);
+      });
+    }
+
+    // Switch to Physical DJI Tello Drone over Wi-Fi
+    if (btnDrone) {
+      btnDrone.addEventListener('click', () => {
+        soundFX.playClick();
+        this.setSource('DRONE_WIFI');
+      });
+    }
+
+    // Modal buttons
+    if (closeTelloBtn && telloModal) {
+      closeTelloBtn.addEventListener('click', () => {
+        telloModal.classList.remove('open');
+      });
+    }
+
+    if (fallbackWebcamBtn && telloModal) {
+      fallbackWebcamBtn.addEventListener('click', () => {
+        soundFX.playClick();
+        telloModal.classList.remove('open');
+        const camIdx = selectCam ? parseInt(selectCam.value, 10) : 0;
+        this.setSource('WEBCAM', camIdx);
+      });
+    }
+
+    if (retryDroneBtn && telloModal) {
+      retryDroneBtn.addEventListener('click', async () => {
+        soundFX.playClick();
+        retryDroneBtn.innerText = 'CONNECTING...';
+        await this.setSource('DRONE_WIFI');
+        retryDroneBtn.innerText = 'RETRY WI-FI CONNECT';
+      });
+    }
   }
 
-  async toggleEngineMode() {
-    this.isPreferPhysical = !this.isPreferPhysical;
-    const modeLabel = document.getElementById('engine-mode-text');
-    if (modeLabel) {
-      modeLabel.innerText = this.isPreferPhysical ? 'CONNECTING...' : 'SIMULATOR';
+  async setSource(sourceType, cameraIndex = 0) {
+    const btnWebcam = document.getElementById('btn-source-webcam');
+    const btnDrone = document.getElementById('btn-source-drone');
+    const linkText = document.getElementById('link-status-text');
+    const linkDot = document.getElementById('link-status-dot');
+    const telloModal = document.getElementById('tello-alert-modal');
+    const telloErrDetail = document.getElementById('tello-error-detail');
+
+    if (linkText) {
+      linkText.innerText = sourceType === 'DRONE_WIFI' ? 'CONNECTING TELLO...' : `CONNECTING CAM ${cameraIndex}...`;
     }
 
     try {
-      const res = await fetch('/api/connect', {
+      const res = await fetch('/api/set_source', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ prefer_physical: this.isPreferPhysical })
+        body: JSON.stringify({ source: sourceType, camera_index: cameraIndex })
       });
       const data = await res.json();
-      this.currentMode = data.mode || (this.isPreferPhysical ? 'PHYSICAL_TELLO' : 'SIMULATOR');
-      if (modeLabel) {
-        modeLabel.innerText = this.currentMode === 'PHYSICAL_TELLO' ? 'DJI TELLO (WI-FI)' : 'SIMULATOR';
+
+      if (data.status === 'connected') {
+        soundFX.playLock();
+        this.currentMode = data.source;
+
+        if (sourceType === 'DRONE_WIFI') {
+          if (btnDrone) btnDrone.classList.add('active');
+          if (btnWebcam) btnWebcam.classList.remove('active');
+          if (linkText) linkText.innerText = 'SOURCE: DJI TELLO (WI-FI)';
+          if (linkDot) linkDot.className = 'status-indicator';
+          if (telloModal) telloModal.classList.remove('open');
+        } else {
+          if (btnWebcam) btnWebcam.classList.add('active');
+          if (btnDrone) btnDrone.classList.remove('active');
+          if (linkText) linkText.innerText = `SOURCE: WEBCAM ${cameraIndex}`;
+          if (linkDot) linkDot.className = 'status-indicator';
+        }
+
+        // Refresh video stream
+        const videoEl = document.getElementById('video-stream-el');
+        if (videoEl) {
+          videoEl.src = `/api/video_feed?t=${Date.now()}`;
+        }
+      } else {
+        // Connection error (e.g. Drone Wi-Fi not reachable)
+        soundFX.playWarning();
+        if (telloErrDetail && data.message) {
+          telloErrDetail.innerText = data.message;
+        }
+        if (telloModal) {
+          telloModal.classList.add('open');
+        }
+        // Keep active button on Webcam
+        if (btnWebcam) btnWebcam.classList.add('active');
+        if (btnDrone) btnDrone.classList.remove('active');
+        if (linkText) linkText.innerText = `SOURCE: WEBCAM ${cameraIndex}`;
       }
-    } catch (e) {
-      if (modeLabel) modeLabel.innerText = 'SIMULATOR';
+    } catch (err) {
+      if (linkText) linkText.innerText = `ERROR: ${err.message}`;
     }
   }
 

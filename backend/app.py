@@ -149,13 +149,38 @@ def video_feed():
 # REST API Endpoints
 # -------------------------------------------------------------
 
+class SourceSelectionRequest(BaseModel):
+    source: str = "WEBCAM"  # "WEBCAM" or "DRONE_WIFI"
+    camera_index: Optional[int] = 0
+
 class ConnectRequest(BaseModel):
     prefer_physical: bool = False
+    source: Optional[str] = None
+    camera_index: Optional[int] = 0
+
+@app.get("/api/available_sources")
+def get_available_sources():
+    """Returns available camera devices and current active avionics source."""
+    cameras = drone_manager.get_available_cameras()
+    return {
+        "current_source": drone_manager.current_source,
+        "camera_index": drone_manager.camera_index,
+        "is_connected": drone_manager.is_connected,
+        "cameras": cameras
+    }
+
+@app.post("/api/set_source")
+def set_avionics_source(req: SourceSelectionRequest):
+    """Explicitly switches between System Webcam and DJI Tello over Wi-Fi."""
+    res = drone_manager.set_source(source=req.source, camera_index=req.camera_index or 0)
+    return res
 
 @app.post("/api/connect")
 def connect_drone(req: ConnectRequest):
-    """Connects to Physical DJI Tello or Simulator."""
-    res = drone_manager.connect(prefer_physical=req.prefer_physical)
+    """Connects to Physical DJI Tello or System Webcam."""
+    if req.source:
+        return drone_manager.set_source(source=req.source, camera_index=req.camera_index or 0)
+    res = drone_manager.connect(prefer_physical=req.prefer_physical, camera_index=req.camera_index or 0)
     return res
 
 

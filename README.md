@@ -74,9 +74,17 @@ This starts the FastAPI server and automatically opens the dashboard at:
 
 ---
 
-## 📡 Connecting to Physical DJI Ryze Tello
+## 📡 Dual-Source Mode: System Webcam vs. Physical DJI Tello
 
-1. Power on your DJI Ryze Tello drone.
-2. Connect your computer to the drone's Wi-Fi network (e.g. `TELLO-XXXXXX`).
-3. On the dashboard header, click **ENGINE: SIMULATOR** to switch to **DJI TELLO (WI-FI)**.
-4. The live 720p 30fps camera feed and real-time battery/altitude telemetry will populate the dashboard.
+The dashboard features an explicit **Avionics Source Selector** in the top header:
+
+### Option 1: System Webcam Mode (Desk Simulation)
+- **Active by default**: Allows complete end-to-end testing of 3D facial/pose scanning, biometric registration, 4-axis PID tracking, virtual flight physics, and telemetry matrix directly from your desk without needing the drone powered on or disconnecting your PC from home/office Wi-Fi.
+- **Multiple Camera Support**: Use the camera dropdown in the top bar to switch between your integrated webcam and secondary USB/external webcams seamlessly.
+
+### Option 2: Physical DJI Ryze Tello (Wi-Fi)
+1. Turn ON your DJI Ryze Tello drone (wait ~10s for the status LED to flash).
+2. On your computer, open your Wi-Fi settings and connect to **`TELLO-XXXXXX`**.
+3. In the top bar of the dashboard, click **`DJI TELLO (WI-FI)`**.
+4. The system automatically connects via high-speed UDP, initialises the 720p 30fps hardware stream, and binds real-time battery and flight telemetry.
+5. *Safety Guard*: If your PC is not connected to the drone's Wi-Fi, the dashboard will display a connection guide modal with troubleshooting instructions and let you instantly continue testing in Webcam Mode with a single click.
