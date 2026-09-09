@@ -334,60 +334,100 @@ export class HudCanvasEngine {
       ctx.setLineDash([]);
     }
 
-    // 5. Floating HUD Badges
+    // 5. Sleek Floating Tactical Target Badge
     const orient = this.tracking.orientation || 'FRONT';
     const speedStr = vel ? `${vel.speed_mps.toFixed(1)}m/s` : '0.0m/s';
-
-    // Top Badge
-    ctx.fillStyle = 'rgba(15, 17, 23, 0.9)';
-    ctx.fillRect(bx, Math.max(10, by - 20), Math.max(130, bw * 0.55), 18);
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.2)';
-    ctx.strokeRect(bx, Math.max(10, by - 20), Math.max(130, bw * 0.55), 18);
-
+    const tagText = `LOCK: ${conf}% // ${orient} // ${dist.toFixed(1)}m // ${speedStr}`;
+    
     ctx.font = '9px "JetBrains Mono", monospace';
+    const tagWidth = ctx.measureText(tagText).width + 16;
+    const tagX = Math.max(10, Math.min(w - tagWidth - 10, bx + (bw - tagWidth) / 2));
+    const tagY = Math.max(30, by - 12);
+
+    // Glass pill backdrop
+    ctx.fillStyle = 'rgba(11, 13, 18, 0.88)';
+    ctx.fillRect(tagX, tagY - 14, tagWidth, 18);
+    ctx.strokeStyle = isMatched ? 'rgba(255, 255, 255, 0.45)' : 'rgba(255, 255, 255, 0.2)';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(tagX, tagY - 14, tagWidth, 18);
+
+    // Pill indicator dot
+    ctx.fillStyle = isMatched ? '#ffffff' : 'rgba(255, 255, 255, 0.5)';
+    ctx.beginPath();
+    ctx.arc(tagX + 8, tagY - 5, 2.5, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Pill text
     ctx.fillStyle = '#ffffff';
     ctx.textAlign = 'left';
-    ctx.fillText(`TARGET [${orient}]`, bx + 5, Math.max(10, by - 20) + 12);
-
-    // Bottom Badge
-    const botY = by + bh + 4;
-    if (botY < h - 18) {
-      ctx.fillStyle = 'rgba(15, 17, 23, 0.9)';
-      ctx.fillRect(bx, botY, 130, 16);
-      ctx.strokeStyle = 'rgba(255, 255, 255, 0.15)';
-      ctx.strokeRect(bx, botY, 130, 16);
-
-      ctx.font = '8px "JetBrains Mono", monospace';
-      ctx.fillStyle = 'rgba(255, 255, 255, 0.85)';
-      ctx.fillText(`RNG: ${dist.toFixed(1)}m | ${speedStr} (${conf}%)`, bx + 5, botY + 11);
-    }
+    ctx.fillText(tagText, tagX + 14, tagY - 2);
 
     ctx.restore();
   }
 
   _drawAltitudeTape(ctx, w, h) {
     const altCm = this.telemetry.altitude_cm || 0;
-    const altM = (altCm / 100.0).toFixed(1);
-    const tapeX = w - 42;
-    const tapeY = h / 2 - 70;
+    const altM = altCm / 100.0;
+    const tapeX = w - 46;
+    const centerY = h * 0.48;
+    const tapeHeight = 150;
+    const startY = centerY - tapeHeight / 2;
 
     ctx.save();
-    ctx.fillStyle = 'rgba(15, 17, 23, 0.7)';
-    ctx.fillRect(tapeX - 16, tapeY, 48, 140);
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.15)';
-    ctx.strokeRect(tapeX - 16, tapeY, 48, 140);
 
-    // Active altitude readout box
+    // Delicate vertical scale line
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.2)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(tapeX, startY);
+    ctx.lineTo(tapeX, startY + tapeHeight);
+    ctx.stroke();
+
+    // Scale graduation ticks
+    ctx.font = '8px "JetBrains Mono", monospace';
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.45)';
+    ctx.textAlign = 'right';
+
+    for (let offsetM = -1.5; offsetM <= 1.5; offsetM += 0.5) {
+      const markAlt = Math.max(0, altM + offsetM);
+      const py = centerY - (offsetM * 36);
+      if (py >= startY && py <= startY + tapeHeight) {
+        ctx.beginPath();
+        ctx.moveTo(tapeX, py);
+        ctx.lineTo(tapeX + (Math.abs(offsetM % 1.0) < 0.1 ? 7 : 4), py);
+        ctx.stroke();
+        if (Math.abs(offsetM % 1.0) < 0.1) {
+          ctx.fillText(`${markAlt.toFixed(1)}`, tapeX - 4, py + 3);
+        }
+      }
+    }
+
+    // Active Altitude Pointer Chevron & Glass Badge
+    ctx.fillStyle = 'rgba(11, 13, 18, 0.88)';
+    ctx.fillRect(tapeX - 42, centerY - 10, 38, 20);
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.35)';
+    ctx.strokeRect(tapeX - 42, centerY - 10, 38, 20);
+
+    // Chevron indicator pointing at scale
+    ctx.beginPath();
+    ctx.moveTo(tapeX - 4, centerY);
+    ctx.lineTo(tapeX + 2, centerY - 3.5);
+    ctx.lineTo(tapeX + 2, centerY + 3.5);
+    ctx.closePath();
     ctx.fillStyle = '#ffffff';
-    ctx.fillRect(tapeX - 20, h / 2 - 10, 56, 20);
-    ctx.fillStyle = '#000000';
+    ctx.fill();
+
+    // Numeric Altitude Readout
+    ctx.fillStyle = '#ffffff';
     ctx.font = 'bold 10px "JetBrains Mono", monospace';
     ctx.textAlign = 'center';
-    ctx.fillText(`${altM}m`, tapeX + 8, h / 2 + 4);
+    ctx.fillText(`${altM.toFixed(1)}m`, tapeX - 23, centerY + 4);
 
+    // Header label
     ctx.font = '8px "JetBrains Mono", monospace';
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.5)';
-    ctx.fillText('ALT', tapeX + 8, tapeY + 10);
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.4)';
+    ctx.fillText('ALT', tapeX - 23, startY - 6);
+
     ctx.restore();
   }
 }

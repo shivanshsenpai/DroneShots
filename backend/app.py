@@ -98,37 +98,7 @@ def generate_mjpeg_stream():
             time.sleep(0.03)
             continue
 
-        # Draw light HUD tracking indicator on the stream frame
-        if current_tracking_data and current_tracking_data.get("target_detected"):
-            bbox = current_tracking_data.get("bbox")
-            if bbox:
-                x, y, w, h = bbox
-                is_matched = current_tracking_data.get("target_matched", False)
-                color = (0, 255, 163) if is_matched else (0, 240, 255) # Emerald vs Cyan
-                
-                # Corner bracket reticles
-                length = min(20, w // 4, h // 4)
-                # Top-Left
-                cv2.line(frame, (x, y), (x + length, y), color, 2)
-                cv2.line(frame, (x, y), (x, y + length), color, 2)
-                # Top-Right
-                cv2.line(frame, (x + w, y), (x + w - length, y), color, 2)
-                cv2.line(frame, (x + w, y), (x + w, y + length), color, 2)
-                # Bottom-Left
-                cv2.line(frame, (x, y + h), (x + length, y + h), color, 2)
-                cv2.line(frame, (x, y + h), (x, y + h - length), color, 2)
-                # Bottom-Right
-                cv2.line(frame, (x + w, y + h), (x + w - length, y + h), color, 2)
-                cv2.line(frame, (x + w, y + h), (x + w, y + h - length), color, 2)
-
-                # Info Label
-                conf = int(current_tracking_data.get("confidence", 0) * 100)
-                orient = current_tracking_data.get("orientation", "")
-                dist = current_tracking_data.get("estimated_distance_m", 0.0)
-                label = f"TARGET LOCKED [{orient}] {dist:.1f}m ({conf}%)" if is_matched else f"DETECTED [{orient}]"
-                cv2.putText(frame, label, (x, max(20, y - 8)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1, cv2.LINE_AA)
-
-        ret, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 75])
+        ret, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
         if ret:
             frame_bytes = buffer.tobytes()
             yield (b'--frame\r\n'
