@@ -88,3 +88,13 @@ The dashboard features an explicit **Avionics Source Selector** in the top heade
 3. In the top bar of the dashboard, click **`DJI TELLO (WI-FI)`**.
 4. The system automatically connects via high-speed UDP, initialises the 720p 30fps hardware stream, and binds real-time battery and flight telemetry.
 5. *Safety Guard*: If your PC is not connected to the drone's Wi-Fi, the dashboard will display a connection guide modal with troubleshooting instructions and let you instantly continue testing in Webcam Mode with a single click.
+
+---
+
+## 👨‍💻 Author & Contact
+
+- **Created & Developed by**: **Shivansh Sharma**
+- **Email**: [shaivanshsharma6000@gmail.com](mailto:shaivanshsharma6000@gmail.com)
+- **GitHub**: [@shivanshsenpai](https://github.com/shivanshsenpai)
+- **Repository**: [https://github.com/shivanshsenpai/DroneShots](https://github.com/shivanshsenpai/DroneShots)
+
