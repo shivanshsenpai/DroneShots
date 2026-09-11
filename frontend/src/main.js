@@ -7,6 +7,7 @@ import { HudCanvasEngine } from './hud/hud_canvas.js';
 import { Hologram3DView } from './three/hologram_view.js';
 import { FlightControlDock } from './controls/flight_dock.js';
 import { ScanModalWizard } from './registration/scan_modal.js';
+import { RunsModal } from './analytics/runs_modal.js';
 import { soundFX } from './audio/sound_fx.js';
 
 class AeroFollowApp {
@@ -16,6 +17,7 @@ class AeroFollowApp {
     this.sidebarHologram = null;
     this.flightDock = null;
     this.scanWizard = null;
+    this.runsModal = null;
     
     this.currentMode = 'SIMULATOR';
     this.isPreferPhysical = false;
@@ -61,6 +63,21 @@ class AeroFollowApp {
       scanBtn.addEventListener('click', () => {
         soundFX.playClick();
         if (this.scanWizard) this.scanWizard.open();
+      });
+    }
+
+    // 5. Missions Archive & Telemetry Analytics Modal
+    const runsModalEl = document.getElementById('runs-modal');
+    if (runsModalEl) {
+      this.runsModal = new RunsModal(runsModalEl);
+      this.runsModal.loadRuns();
+    }
+
+    const openRunsBtn = document.getElementById('btn-open-runs-modal');
+    if (openRunsBtn) {
+      openRunsBtn.addEventListener('click', () => {
+        soundFX.playClick();
+        if (this.runsModal) this.runsModal.open();
       });
     }
 
@@ -394,6 +411,11 @@ class AeroFollowApp {
       if (rcEl) {
         rcEl.innerText = `R${rc_commands.roll} P${rc_commands.pitch} T${rc_commands.throttle} Y${rc_commands.yaw}`;
       }
+    }
+
+    // 7. Update Live Mission Active Run state
+    if (this.runsModal && payload.active_run !== undefined) {
+      this.runsModal.updateActiveRun(payload.active_run);
     }
   }
 

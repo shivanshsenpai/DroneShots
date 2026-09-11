@@ -42,4 +42,6 @@ Thumbs.db
 
 # Snapshots
 data/snapshots/
+*.db
+
 

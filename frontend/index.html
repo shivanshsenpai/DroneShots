@@ -63,6 +63,19 @@
       <!-- Live Top Telemetry Metrics & Action Tools -->
       <div class="top-telemetry-metrics">
         
+        <!-- Live Mission Recording Pill -->
+        <div id="live-mission-pill" class="status-pill live-mission-pill" style="display: none;">
+          <span class="status-indicator live-rec-dot"></span>
+          <span id="live-mission-text">REC 00:00</span>
+        </div>
+
+        <!-- Mission Archive & Analytics Inspector -->
+        <button id="btn-open-runs-modal" class="hud-icon-text-btn" title="View Flight Mission History & Telemetry Analytics">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>
+          <span>MISSIONS</span>
+          <span id="header-mission-badge" class="badge-mini">0</span>
+        </button>
+
         <!-- Snapshot Capture Tool -->
         <button id="btn-capture-snapshot" class="hud-icon-btn" title="Capture HD Snapshot">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"></path><circle cx="12" cy="13" r="4"></circle></svg>
@@ -436,6 +449,96 @@
             <span>RETRY WI-FI CONNECT</span>
           </button>
         </div>
+      </div>
+    </div>
+
+    <!-- FLIGHT MISSIONS & TELEMETRY ANALYTICS MODAL -->
+    <div id="runs-modal" class="modal-backdrop">
+      <div class="runs-modal-card">
+        
+        <!-- Modal Header -->
+        <div class="runs-modal-header">
+          <div class="runs-title-group">
+            <div class="wizard-title" style="display: flex; align-items: center; gap: 8px;">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
+              <span>FLIGHT MISSION ARCHIVE & TELEMETRY ANALYTICS</span>
+            </div>
+            <div class="wizard-subtitle">PERSISTENT RUNS DATABASE // TIME-SERIES AVIONICS RECORDER</div>
+          </div>
+          <div style="display: flex; align-items: center; gap: 8px;">
+            <button id="btn-refresh-runs" class="btn-secondary" style="padding: 4px 10px; font-size: 10px;" title="Refresh mission list">
+              <span>REFRESH</span>
+            </button>
+            <button id="btn-clear-runs-history" class="btn-danger-action" style="padding: 4px 10px; font-size: 10px;" title="Clear all saved flight runs">
+              <span>CLEAR ALL</span>
+            </button>
+            <button id="modal-runs-close-btn" class="btn-secondary" style="padding: 3px 10px;">✕</button>
+          </div>
+        </div>
+
+        <!-- High-Level Aggregate Summary Cards -->
+        <div class="runs-summary-row">
+          <div class="summary-metric-card">
+            <span class="summary-card-label">TOTAL MISSIONS</span>
+            <span id="summary-total-missions" class="summary-card-val">0</span>
+          </div>
+          <div class="summary-metric-card">
+            <span class="summary-card-label">TOTAL AIR TIME</span>
+            <span id="summary-total-airtime" class="summary-card-val">0m 0s</span>
+          </div>
+          <div class="summary-metric-card">
+            <span class="summary-card-label">AVG TARGET LOCK</span>
+            <span id="summary-avg-lock" class="summary-card-val">0.0%</span>
+          </div>
+          <div class="summary-metric-card">
+            <span class="summary-card-label">PEAK AIRSPEED</span>
+            <span id="summary-peak-speed" class="summary-card-val">0.0 m/s</span>
+          </div>
+        </div>
+
+        <!-- Split Layout: Runs List + Detail Analytics Inspector -->
+        <div class="runs-modal-content">
+          
+          <!-- Left Column: Runs History List -->
+          <div class="runs-sidebar-pane">
+            <div class="runs-pane-title">RECORDED SESSIONS</div>
+            <div class="runs-history-list" id="runs-history-list">
+              <!-- Populated dynamically via RunsModal -->
+            </div>
+          </div>
+
+          <!-- Right Column: Detail Metrics & Interactive Telemetry Chart -->
+          <div class="runs-detail-pane">
+            
+            <div class="run-detail-header">
+              <div>
+                <div id="run-detail-title" class="run-detail-title">MISSION TELEMETRY ANALYTICS</div>
+                <div id="run-detail-meta" class="run-detail-meta">Select a flight mission to view detailed avionics.</div>
+              </div>
+
+              <!-- Metric Filter Toggles -->
+              <div class="chart-filter-bar">
+                <button class="chart-filter-btn active" data-metric="ALL">ALL METRICS</button>
+                <button class="chart-filter-btn" data-metric="ALT">ALTITUDE</button>
+                <button class="chart-filter-btn" data-metric="DIST">DISTANCE</button>
+                <button class="chart-filter-btn" data-metric="SPEED">SPEED</button>
+              </div>
+            </div>
+
+            <!-- Interactive Canvas Time-Series Chart -->
+            <div class="run-chart-container">
+              <canvas id="run-telemetry-chart" width="580" height="220"></canvas>
+            </div>
+
+            <!-- Single Run Key Metrics Grid -->
+            <div id="run-detail-metrics" class="run-detail-metrics-grid">
+              <!-- Populated dynamically via RunsModal -->
+            </div>
+
+          </div>
+
+        </div>
+
       </div>
     </div>
 

@@ -22,6 +22,7 @@ from backend.vision.tracker_3d import UnifiedTracker3D
 from backend.navigation.pid_follower import PIDController4Axis
 from backend.navigation.kalman_tracker import KalmanTargetFilter
 from backend.profiles.profile_store import ProfileStore
+from backend.database.flight_db import FlightDatabase
 
 # Initialize Core Services
 drone_manager = TelloDroneManager()
@@ -29,6 +30,7 @@ tracker_3d = UnifiedTracker3D()
 pid_controller = PIDController4Axis()
 kalman_filter = KalmanTargetFilter()
 profile_store = ProfileStore()
+flight_db = FlightDatabase()
 
 # Global State
 autonomous_tracking_active = False
@@ -47,6 +49,8 @@ async def lifespan(app: FastAPI):
     yield
     # Shutdown
     print("[APP] Shutting down...")
+    if flight_db.active_run:
+        flight_db.end_run(status="SHUTDOWN")
     drone_manager.stop()
 
 
@@ -62,7 +66,7 @@ app.add_middleware(
 
 
 async def autonomous_control_loop():
-    """Background loop that updates tracking and sends PID commands to the drone."""
+    """Background loop that updates tracking, samples mission telemetry, and sends PID commands."""
     global current_tracking_data, last_rc_output, autonomous_tracking_active
     while True:
         try:
@@ -71,6 +75,11 @@ async def autonomous_control_loop():
                 # 1. Process 3D tracking & orientation
                 track_result = tracker_3d.process_and_track(frame)
                 current_tracking_data = track_result
+
+                # Periodic 1Hz telemetry sampling if a flight mission is active
+                if flight_db.active_run:
+                    telem = drone_manager.get_telemetry()
+                    flight_db.sample_active_run(telem, track_result)
 
                 # 2. If Autonomous Tracking is ON and drone is flying
                 if autonomous_tracking_active:
@@ -272,6 +281,13 @@ def toggle_autonomous_tracking(req: TrackingToggleRequest):
     """Toggles Autonomous Follow on or off."""
     global autonomous_tracking_active
     autonomous_tracking_active = req.active
+    if req.active and not flight_db.active_run:
+        telem = drone_manager.get_telemetry()
+        flight_db.start_run(
+            mode=pid_controller.mode,
+            source=drone_manager.current_source,
+            start_battery=telem.get("battery", 100)
+        )
     if not req.active:
         drone_manager.send_rc_control(0, 0, 0, 0)
     return {"status": "updated", "autonomous_tracking_active": autonomous_tracking_active}
@@ -281,6 +297,13 @@ def toggle_autonomous_tracking(req: TrackingToggleRequest):
 @app.post("/api/flight/takeoff")
 def flight_takeoff():
     res = drone_manager.takeoff()
+    if res and not flight_db.active_run:
+        telem = drone_manager.get_telemetry()
+        flight_db.start_run(
+            mode=pid_controller.mode,
+            source=drone_manager.current_source,
+            start_battery=telem.get("battery", 100)
+        )
     return {"status": "success" if res else "failed"}
 
 
@@ -289,6 +312,9 @@ def flight_land():
     global autonomous_tracking_active
     autonomous_tracking_active = False
     res = drone_manager.land()
+    if flight_db.active_run:
+        telem = drone_manager.get_telemetry()
+        flight_db.end_run(status="LANDED", end_battery=telem.get("battery"))
     return {"status": "success" if res else "failed"}
 
 
@@ -297,6 +323,9 @@ def flight_emergency():
     global autonomous_tracking_active
     autonomous_tracking_active = False
     drone_manager.emergency()
+    if flight_db.active_run:
+        telem = drone_manager.get_telemetry()
+        flight_db.end_run(status="EMERGENCY", end_battery=telem.get("battery"))
     return {"status": "emergency_stop_triggered"}
 
 
@@ -331,6 +360,9 @@ def capture_snapshot():
         cv2.putText(annotated, f"TARGET: {orient} | DIST: {dist:.1f}m", (20, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1, cv2.LINE_AA)
 
     cv2.imwrite(filepath, annotated, [cv2.IMWRITE_JPEG_QUALITY, 95])
+    if flight_db.active_run:
+        flight_db.increment_snapshot_count()
+
     return {"status": "captured", "filename": filename, "url": f"/snapshots/{filename}"}
 
 
@@ -350,6 +382,77 @@ def manual_rc(req: ManualRCRequest):
 
 
 # -------------------------------------------------------------
+# Flight Runs & Mission Database Endpoints
+# -------------------------------------------------------------
+
+class StartRunRequest(BaseModel):
+    mode: Optional[str] = None
+    source: Optional[str] = None
+
+class EndRunRequest(BaseModel):
+    status: Optional[str] = "COMPLETED"
+
+@app.get("/api/db/runs")
+def get_flight_runs(limit: int = 50, offset: int = 0):
+    """Retrieves mission history, high-level summary statistics, and active status."""
+    runs = flight_db.list_runs(limit=limit, offset=offset)
+    stats = flight_db.get_summary_stats()
+    active_run = flight_db.get_active_run()
+    return {
+        "runs": runs,
+        "summary": stats,
+        "active_run": active_run
+    }
+
+@app.get("/api/db/runs/current")
+def get_current_run():
+    """Returns active live mission run status, or null."""
+    run = flight_db.get_active_run()
+    return {"active_run": run}
+
+@app.post("/api/db/runs/start")
+def start_flight_run(req: Optional[StartRunRequest] = None):
+    """Explicitly starts a flight session."""
+    telem = drone_manager.get_telemetry()
+    mode = (req.mode if req and req.mode else pid_controller.mode)
+    source = (req.source if req and req.source else drone_manager.current_source)
+    run = flight_db.start_run(
+        mode=mode,
+        source=source,
+        start_battery=telem.get("battery", 100)
+    )
+    return {"status": "started", "run": run}
+
+@app.post("/api/db/runs/end")
+def end_flight_run(req: Optional[EndRunRequest] = None):
+    """Ends the active flight session."""
+    status = req.status if req and req.status else "COMPLETED"
+    telem = drone_manager.get_telemetry()
+    run = flight_db.end_run(status=status, end_battery=telem.get("battery"))
+    return {"status": "ended", "run": run}
+
+@app.get("/api/db/runs/{run_id}")
+def get_flight_run_detail(run_id: str):
+    """Returns full flight run record including time-series samples."""
+    run = flight_db.get_run(run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail="Run not found")
+    return run
+
+@app.delete("/api/db/runs/{run_id}")
+def delete_flight_run(run_id: str):
+    """Deletes a run record."""
+    deleted = flight_db.delete_run(run_id)
+    return {"status": "deleted" if deleted else "not_found"}
+
+@app.post("/api/db/runs/clear")
+def clear_flight_runs():
+    """Clears all historical flight records."""
+    flight_db.clear_all()
+    return {"status": "cleared"}
+
+
+# -------------------------------------------------------------
 # WebSocket Telemetry & 3D Tracking Stream (20 Hz)
 # -------------------------------------------------------------
 
@@ -366,6 +469,7 @@ async def websocket_telemetry(websocket: WebSocket):
                 "rc_commands": last_rc_output,
                 "autonomous_active": autonomous_tracking_active,
                 "follow_mode": pid_controller.mode,
+                "active_run": flight_db.get_active_run(),
                 "timestamp": time.time()
             }
             await websocket.send_json(payload)
