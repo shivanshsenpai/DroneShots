@@ -66,8 +66,10 @@ app.add_middleware(
 
 
 async def autonomous_control_loop():
-    """Background loop that updates tracking, samples mission telemetry, and sends PID commands."""
+    """Background loop that updates tracking, samples mission telemetry, processes gestures, and sends PID commands."""
     global current_tracking_data, last_rc_output, autonomous_tracking_active
+    last_gesture_action_time = 0.0
+
     while True:
         try:
             frame = drone_manager.get_frame()
@@ -75,15 +77,50 @@ async def autonomous_control_loop():
                 # 1. Process 3D tracking & orientation
                 track_result = tracker_3d.process_and_track(frame)
                 current_tracking_data = track_result
+                telem = drone_manager.get_telemetry()
 
                 # Periodic 1Hz telemetry sampling if a flight mission is active
                 if flight_db.active_run:
-                    telem = drone_manager.get_telemetry()
                     flight_db.sample_active_run(telem, track_result)
 
-                # 2. If Autonomous Tracking is ON and drone is flying
+                # 2. Process AI Vision Hand & Body Gestures
+                gesture = track_result.get("gesture", {})
+                g_type = gesture.get("type", "NONE")
+                g_hold = gesture.get("hold_time", 0.0)
+                now = time.time()
+
+                if gesture.get("snapshot_triggered"):
+                    # Auto-capture 4K snapshot on peace sign gesture
+                    capture_snapshot()
+
+                if g_type != "NONE" and g_hold >= 1.1 and (now - last_gesture_action_time > 3.0):
+                    if g_type == "THUMBS_LOCK" and not autonomous_tracking_active:
+                        autonomous_tracking_active = True
+                        if not flight_db.active_run:
+                            flight_db.start_run(
+                                mode=pid_controller.mode,
+                                source=drone_manager.current_source,
+                                start_battery=telem.get("battery", 100)
+                            )
+                        last_gesture_action_time = now
+                    elif g_type == "PALM_HOVER" and autonomous_tracking_active:
+                        autonomous_tracking_active = False
+                        pid_controller.abort_cinematic()
+                        drone_manager.send_rc_control(0, 0, 0, 0)
+                        last_gesture_action_time = now
+                    elif g_type == "CROSSED_LAND":
+                        flight_land()
+                        last_gesture_action_time = now
+                    elif g_type == "POINT_LEFT":
+                        pid_controller.set_mode("FLANK_LEFT")
+                        last_gesture_action_time = now
+                    elif g_type == "POINT_RIGHT":
+                        pid_controller.set_mode("FLANK_RIGHT")
+                        last_gesture_action_time = now
+
+                # 3. If Autonomous Tracking or QuickShot is active
                 if autonomous_tracking_active:
-                    rc_cmds = pid_controller.compute_rc_velocities(track_result)
+                    rc_cmds = pid_controller.compute_rc_velocities(track_result, current_telemetry=telem)
                     last_rc_output = rc_cmds
                     drone_manager.send_rc_control(
                         roll=rc_cmds["roll"],
@@ -453,6 +490,41 @@ def clear_flight_runs():
 
 
 # -------------------------------------------------------------
+# Cinematic QuickShot Endpoints
+# -------------------------------------------------------------
+
+class CinematicStartRequest(BaseModel):
+    maneuver: str  # "DRONIE", "ROCKET", "HELIX", "BOOMERANG"
+
+@app.post("/api/cinematic/start")
+def start_cinematic_maneuver(req: CinematicStartRequest):
+    """Starts automated movie-grade flight trajectory choreography."""
+    global autonomous_tracking_active
+    telem = drone_manager.get_telemetry()
+    res = pid_controller.start_cinematic(req.maneuver, telem, current_tracking_data)
+    if res:
+        autonomous_tracking_active = True
+        if not flight_db.active_run:
+            flight_db.start_run(
+                mode=f"QUICKSHOT_{req.maneuver.upper()}",
+                source=drone_manager.current_source,
+                battery_start=telem.get("battery", 100)
+            )
+    return {"status": "started" if res else "failed", "cinematic": pid_controller.get_cinematic_status()}
+
+@app.post("/api/cinematic/abort")
+def abort_cinematic_maneuver():
+    """Aborts active cinematic QuickShot routine."""
+    pid_controller.abort_cinematic()
+    return {"status": "aborted", "cinematic": pid_controller.get_cinematic_status()}
+
+@app.get("/api/cinematic/status")
+def get_cinematic_status():
+    """Returns status of cinematic routine."""
+    return pid_controller.get_cinematic_status()
+
+
+# -------------------------------------------------------------
 # WebSocket Telemetry & 3D Tracking Stream (20 Hz)
 # -------------------------------------------------------------
 
@@ -469,6 +541,7 @@ async def websocket_telemetry(websocket: WebSocket):
                 "rc_commands": last_rc_output,
                 "autonomous_active": autonomous_tracking_active,
                 "follow_mode": pid_controller.mode,
+                "cinematic": pid_controller.get_cinematic_status(),
                 "active_run": flight_db.get_active_run(),
                 "timestamp": time.time()
             }

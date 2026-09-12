@@ -87,6 +87,11 @@
           <svg id="audio-icon-muted" style="display:none;" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon><line x1="23" y1="9" x2="17" y2="15"></line><line x1="17" y1="9" x2="23" y2="15"></line></svg>
         </button>
 
+        <!-- Voice Avionics Copilot Toggle (JARVIS / BETTY) -->
+        <button id="btn-toggle-voice" class="hud-icon-btn" title="Toggle AI Voice Avionics Copilot (JARVIS)">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"></path><path d="M19 10v2a7 7 0 0 1-14 0v-2"></path><line x1="12" y1="19" x2="12" y2="23"></line><line x1="8" y1="23" x2="16" y2="23"></line></svg>
+        </button>
+
         <div class="metric-badge">
           <span class="metric-badge-label">FLIGHT TIME</span>
           <span id="top-flight-time" class="metric-badge-val">00:00</span>
@@ -138,6 +143,22 @@
         <div class="pfd-badge-top-right">
           <div id="pfd-target-status" class="lock-status-badge">
             <span>TARGET: SCANNING</span>
+          </div>
+        </div>
+
+        <!-- QuickShot In-Flight HUD Overlay -->
+        <div id="quickshot-hud-overlay" class="quickshot-hud-overlay" style="display: none;">
+          <div class="quickshot-hud-header">
+            <span class="status-indicator"></span>
+            <span id="qs-hud-name">CINEMATIC: DRONIE</span>
+            <button id="btn-abort-quickshot" class="btn-qs-abort">ABORT ✕</button>
+          </div>
+          <div class="quickshot-progress-track">
+            <div id="quickshot-progress-fill" class="quickshot-progress-fill"></div>
+          </div>
+          <div class="quickshot-hud-meta">
+            <span id="qs-hud-phase">PHASE: EXPANDING</span>
+            <span id="qs-hud-pct">0%</span>
           </div>
         </div>
 
@@ -298,6 +319,22 @@
         </button>
         <button class="mode-btn" data-mode="ORBIT" title="Drone dynamically orbits 360° around subject">
           <span>ORBIT</span>
+        </button>
+      </div>
+
+      <!-- Cinematic QuickShots Cluster -->
+      <div class="quickshot-modes-group">
+        <button class="quickshot-btn" data-shot="DRONIE" title="Dronie: Flies backward & upward at 45 degrees">
+          <span>DRONIE</span>
+        </button>
+        <button class="quickshot-btn" data-shot="ROCKET" title="Rocket: Ascends vertically with nadir framing">
+          <span>ROCKET</span>
+        </button>
+        <button class="quickshot-btn" data-shot="HELIX" title="Helix: Ascending 360 spiral orbit">
+          <span>HELIX</span>
+        </button>
+        <button class="quickshot-btn" data-shot="BOOMERANG" title="Boomerang: Sweeping oval trajectory">
+          <span>BOOMERANG</span>
         </button>
       </div>
 

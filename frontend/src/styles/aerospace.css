@@ -1561,3 +1561,122 @@ body::after {
   color: #ffffff;
 }
 
+/* ============================================================= */
+/* CINEMATIC QUICKSHOT CONTROLS & IN-FLIGHT HUD OVERLAY         */
+/* ============================================================= */
+
+.quickshot-modes-group {
+  display: flex;
+  align-items: center;
+  background: var(--bg-glass-card);
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  padding: 3px;
+  gap: 3px;
+}
+
+.quickshot-btn {
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--text-muted);
+  padding: 5px 9px;
+  border-radius: 5px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  white-space: nowrap;
+}
+.quickshot-btn:hover {
+  color: #ffffff;
+  background: rgba(255, 255, 255, 0.08);
+}
+.quickshot-btn.active {
+  color: #000000;
+  background: #ffffff;
+  border-color: #ffffff;
+  box-shadow: 0 0 10px rgba(255, 255, 255, 0.4);
+}
+
+/* In-Flight QuickShot HUD Progress Card */
+.quickshot-hud-overlay {
+  position: absolute;
+  top: 48px;
+  right: 16px;
+  width: 220px;
+  background: rgba(9, 11, 15, 0.92);
+  border: 1px solid rgba(255, 255, 255, 0.4);
+  border-radius: 8px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.8);
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  z-index: 15;
+  backdrop-filter: blur(12px);
+}
+
+.quickshot-hud-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+#qs-hud-name {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  font-weight: 700;
+  color: #ffffff;
+  letter-spacing: 0.5px;
+}
+
+.btn-qs-abort {
+  background: rgba(239, 68, 68, 0.2);
+  border: 1px solid #ef4444;
+  color: #ef4444;
+  font-family: var(--font-mono);
+  font-size: 8.5px;
+  font-weight: 700;
+  padding: 2px 6px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.btn-qs-abort:hover {
+  background: #ef4444;
+  color: #ffffff;
+}
+
+.quickshot-progress-track {
+  width: 100%;
+  height: 4px;
+  background: rgba(255, 255, 255, 0.12);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.quickshot-progress-fill {
+  height: 100%;
+  width: 0%;
+  background: #ffffff;
+  box-shadow: 0 0 8px #ffffff;
+  transition: width 0.1s linear;
+}
+
+.quickshot-hud-meta {
+  display: flex;
+  justify-content: space-between;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  color: var(--text-muted);
+}
+
+#btn-toggle-voice.active {
+  background: rgba(255, 255, 255, 0.2);
+  border-color: #ffffff;
+  color: #ffffff;
+}
+
+

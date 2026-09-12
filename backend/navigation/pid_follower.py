@@ -9,12 +9,14 @@ import numpy as np
 from typing import Dict, Any, Tuple, Optional
 
 from backend.config import PIDConfig, FollowConfig
+from backend.navigation.cinematic_director import CinematicDirector
 
 
 class PIDController4Axis:
     def __init__(self, pid_config: Optional[PIDConfig] = None, follow_config: Optional[FollowConfig] = None):
         self.pid_cfg = pid_config or PIDConfig()
         self.follow_cfg = follow_config or FollowConfig()
+        self.cinematic = CinematicDirector()
 
         # Follow Mode: "LEAD", "CHASE", "FLANK_LEFT", "FLANK_RIGHT", "ORBIT"
         self.mode = self.follow_cfg.DEFAULT_MODE
@@ -98,7 +100,7 @@ class PIDController4Axis:
         self.curr_roll = 0.0
         self.last_time = time.time()
 
-    def compute_rc_velocities(self, tracking_state: Dict[str, Any]) -> Dict[str, int]:
+    def compute_rc_velocities(self, tracking_state: Dict[str, Any], current_telemetry: Optional[Dict[str, Any]] = None) -> Dict[str, int]:
         """
         Computes 4-axis RC commands (-100 to +100) based on target tracking state.
         Returns: {"roll": int, "pitch": int, "throttle": int, "yaw": int}
@@ -106,6 +108,11 @@ class PIDController4Axis:
         now = time.time()
         dt = max(0.01, min(0.2, now - self.last_time))
         self.last_time = now
+
+        # If automated cinematic routine is active, delegate command generation
+        if self.cinematic.is_active:
+            rc_cmds, _ = self.cinematic.compute_rc_commands(dt, current_telemetry or {}, tracking_state)
+            return rc_cmds
 
         target_detected = tracking_state.get("target_detected", False)
         target_matched = tracking_state.get("target_matched", False)
@@ -224,3 +231,16 @@ class PIDController4Axis:
             "throttle": final_throttle,
             "yaw": final_yaw
         }
+
+    def start_cinematic(self, maneuver: str, telemetry: Dict[str, Any], tracking: Dict[str, Any]) -> bool:
+        """Starts automated cinematic QuickShot routine."""
+        return self.cinematic.start_maneuver(maneuver, telemetry, tracking)
+
+    def abort_cinematic(self):
+        """Aborts active cinematic routine."""
+        self.cinematic.abort()
+
+    def get_cinematic_status(self) -> Dict[str, Any]:
+        """Returns status of cinematic routine."""
+        return self.cinematic.get_status()
+

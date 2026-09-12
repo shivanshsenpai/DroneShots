@@ -8,6 +8,7 @@ import { Hologram3DView } from './three/hologram_view.js';
 import { FlightControlDock } from './controls/flight_dock.js';
 import { ScanModalWizard } from './registration/scan_modal.js';
 import { RunsModal } from './analytics/runs_modal.js';
+import { voiceCopilot } from './audio/voice_copilot.js';
 import { soundFX } from './audio/sound_fx.js';
 
 class AeroFollowApp {
@@ -22,6 +23,9 @@ class AeroFollowApp {
     this.currentMode = 'SIMULATOR';
     this.isPreferPhysical = false;
     this.wasTargetMatched = false;
+    this.lastSpokenGesture = 'NONE';
+    this.lockedTargetName = 'Commander Prime';
+    this.wasCinematicActive = false;
 
     this._initUI();
     this._connectWebSocket();
@@ -101,8 +105,63 @@ class AeroFollowApp {
       });
     }
 
-    // Follow Parameters Range Sliders
-    this._initFollowSliders();
+    // Voice Avionics Copilot (JARVIS / BETTY) Toggle Button
+    const voiceBtn = document.getElementById('btn-toggle-voice');
+    if (voiceBtn) {
+      voiceBtn.classList.add('active');
+      voiceBtn.addEventListener('click', () => {
+        soundFX.playClick();
+        const isMuted = voiceCopilot.toggleMute();
+        if (isMuted) voiceBtn.classList.remove('active');
+        else voiceBtn.classList.add('active');
+      });
+    }
+
+    // Cinematic QuickShot Buttons (Dronie, Rocket, Helix, Boomerang)
+    const qsBtns = document.querySelectorAll('.quickshot-btn');
+    qsBtns.forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const maneuver = btn.dataset.shot;
+        soundFX.playClick();
+        qsBtns.forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+
+        try {
+          const res = await fetch('/api/cinematic/start', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ maneuver })
+          });
+          const data = await res.json();
+          if (data.status === 'started') {
+            voiceCopilot.quickshotStarted(maneuver);
+          }
+        } catch (e) {
+          console.error("Failed to trigger QuickShot:", e);
+        }
+      });
+    });
+
+    const abortQsBtn = document.getElementById('btn-abort-quickshot');
+    if (abortQsBtn) {
+      abortQsBtn.addEventListener('click', async () => {
+        soundFX.playWarning();
+        qsBtns.forEach(b => b.classList.remove('active'));
+        try {
+          await fetch('/api/cinematic/abort', { method: 'POST' });
+        } catch (e) {}
+      });
+    }
+
+    // Voice Callout on Flight Actions
+    const takeoffBtn = document.getElementById('btn-takeoff');
+    if (takeoffBtn) {
+      takeoffBtn.addEventListener('click', () => voiceCopilot.takeoff());
+    }
+    const landBtn = document.getElementById('btn-land');
+    if (landBtn) {
+      landBtn.addEventListener('click', () => voiceCopilot.landing());
+    }
 
     // Video stream image error handler (retry if stream dropped)
     const videoEl = document.getElementById('video-stream-el');
@@ -329,16 +388,58 @@ class AeroFollowApp {
       this.sidebarHologram.updateFromLandmarks(tracking.landmarks_3d_world, tracking.yaw_deg || 0);
     }
 
-    // 3. Audio Chime on Target Lock Transition
+    // 3. Audio Chime & Voice Callout on Target Lock Transition
     if (tracking) {
       const isMatched = tracking.target_matched;
       if (isMatched && !this.wasTargetMatched) {
         soundFX.playLock();
+        voiceCopilot.targetLocked(this.lockedTargetName);
       }
       this.wasTargetMatched = isMatched;
+
+      // Proximity Alert Voice Warning (< 0.95m)
+      if (tracking.estimated_distance_m && tracking.estimated_distance_m < 0.95) {
+        voiceCopilot.proximityWarning();
+      }
+
+      // Gesture Recognition Voice Callout
+      if (tracking.gesture) {
+        const gType = tracking.gesture.type;
+        if (gType !== 'NONE' && gType !== this.lastSpokenGesture) {
+          voiceCopilot.gestureRecognized(tracking.gesture.label);
+          this.lastSpokenGesture = gType;
+        } else if (gType === 'NONE') {
+          this.lastSpokenGesture = 'NONE';
+        }
+      }
     }
 
-    // 4. Update Top Header Telemetry
+    // 4. Update QuickShot Cinematic In-Flight Overlay
+    const cinematic = payload.cinematic;
+    const qsOverlay = document.getElementById('quickshot-hud-overlay');
+    const qsFill = document.getElementById('quickshot-progress-fill');
+    const qsName = document.getElementById('qs-hud-name');
+    const qsPhase = document.getElementById('qs-hud-phase');
+    const qsPct = document.getElementById('qs-hud-pct');
+    const qsBtns = document.querySelectorAll('.quickshot-btn');
+
+    if (cinematic && cinematic.active) {
+      if (qsOverlay) qsOverlay.style.display = 'flex';
+      if (qsName) qsName.innerText = `CINEMATIC: ${cinematic.maneuver}`;
+      if (qsPhase) qsPhase.innerText = `PHASE: ${cinematic.phase}`;
+      if (qsPct) qsPct.innerText = `${Math.round(cinematic.progress_pct)}%`;
+      if (qsFill) qsFill.style.width = `${cinematic.progress_pct}%`;
+      this.wasCinematicActive = true;
+    } else {
+      if (qsOverlay) qsOverlay.style.display = 'none';
+      if (this.wasCinematicActive) {
+        qsBtns.forEach(b => b.classList.remove('active'));
+        voiceCopilot.quickshotCompleted(cinematic ? cinematic.maneuver : 'maneuver');
+        this.wasCinematicActive = false;
+      }
+    }
+
+    // 5. Update Top Header Telemetry
     if (telemetry) {
       const ft = telemetry.flight_time_sec || 0;
       const mins = String(Math.floor(ft / 60)).padStart(2, '0');
@@ -428,6 +529,41 @@ class AeroFollowApp {
       pfdTarget.className = 'lock-status-badge locked';
       pfdTarget.innerText = `LOCKED: ${profile.name}`;
     }
+  }
+
+  _updateAudioIcon() {
+    const unmuted = document.getElementById('audio-icon-unmuted');
+    const muted = document.getElementById('audio-icon-muted');
+    if (unmuted && muted) {
+      if (soundFX.isMuted()) {
+        unmuted.style.display = 'none';
+        muted.style.display = 'block';
+      } else {
+        unmuted.style.display = 'block';
+        muted.style.display = 'none';
+      }
+    }
+  }
+
+  captureSnapshot() {
+    soundFX.playShutter();
+    const pfd = document.querySelector('.pfd-viewport');
+    if (pfd) {
+      const flash = document.createElement('div');
+      flash.style.position = 'absolute';
+      flash.style.inset = '0';
+      flash.style.backgroundColor = '#ffffff';
+      flash.style.opacity = '0.8';
+      flash.style.zIndex = '50';
+      flash.style.pointerEvents = 'none';
+      flash.style.transition = 'opacity 0.4s ease';
+      pfd.appendChild(flash);
+      requestAnimationFrame(() => {
+        flash.style.opacity = '0';
+        setTimeout(() => flash.remove(), 400);
+      });
+    }
+    voiceCopilot.speak("Snapshot captured", "snapshot");
   }
 }
 

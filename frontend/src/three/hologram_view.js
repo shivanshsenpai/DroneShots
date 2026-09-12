@@ -94,7 +94,14 @@ export class Hologram3DView {
     this.directionArrow = new THREE.ArrowHelper(dir, origin, 0.6, 0xffffff, 0.12, 0.06);
     this.scene.add(this.directionArrow);
 
-    // 5. Build Default Skeleton & Volumes
+    // 5. Sweeping 360-degree Holographic Radar Beam
+    const sweepPoints = [new THREE.Vector3(0, -0.896, 0), new THREE.Vector3(2.1, -0.896, 0)];
+    const sweepGeo = new THREE.BufferGeometry().setFromPoints(sweepPoints);
+    const sweepMat = new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.35 });
+    this.radarSweep = new THREE.Line(sweepGeo, sweepMat);
+    this.scene.add(this.radarSweep);
+
+    // 6. Build Default Skeleton & Volumes
     this._buildDefaultSkeleton();
   }
 
@@ -226,6 +233,11 @@ export class Hologram3DView {
     // Gentle auto-rotation when not dragging
     if (!this.isDragging) {
       this.rotation.y += 0.004;
+    }
+
+    // Continuously sweep radar beam
+    if (this.radarSweep) {
+      this.radarSweep.rotation.y -= 0.035;
     }
 
     this.subjectGroup.rotation.y = this.rotation.y;

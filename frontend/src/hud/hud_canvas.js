@@ -75,8 +75,21 @@ export class HudCanvasEngine {
     // 3. Draw Trajectory Trail & Target Lock Brackets + Velocity Vector
     this._drawTargetLock(ctx, w, h);
 
-    // 4. Draw Altitude Tape
+    // 4. Draw Occlusion Ghost Box (Predictive Reacquisition)
+    this._drawOcclusionGhost(ctx, w, h);
+
+    // 5. Draw Predictive Interception Trajectory
+    this._drawPredictiveInterception(ctx, w, h);
+
+    // 6. Draw AI Vision Gesture HUD Feedback
+    this._drawGestureFeedback(ctx, w, h);
+
+    // 7. Draw Aviation Tapes (Airspeed on Left, Altitude on Right)
+    this._drawAirspeedTape(ctx, w, h);
     this._drawAltitudeTape(ctx, w, h);
+
+    // 8. Draw Tactical Top-Down Radar / HSI (Horizontal Situation Indicator)
+    this._drawTacticalRadar(ctx, w, h);
   }
 
   _drawCompassRibbon(ctx, w, h) {
@@ -430,4 +443,303 @@ export class HudCanvasEngine {
 
     ctx.restore();
   }
+
+  _drawAirspeedTape(ctx, w, h) {
+    const tapeX = 26;
+    const tapeHeight = Math.min(180, h * 0.42);
+    const startY = (h - tapeHeight) / 2;
+    const centerY = h / 2;
+
+    const vel = (this.tracking && this.tracking.velocity) ? this.tracking.velocity.speed_mps : 0.0;
+    const spd = Math.max(0, vel);
+
+    ctx.save();
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.2)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(tapeX, startY);
+    ctx.lineTo(tapeX, startY + tapeHeight);
+    ctx.stroke();
+
+    ctx.font = '8px "JetBrains Mono", monospace';
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.45)';
+    ctx.textAlign = 'left';
+
+    for (let offsetS = -1.5; offsetS <= 1.5; offsetS += 0.5) {
+      const markSpd = Math.max(0, spd + offsetS);
+      const py = centerY - (offsetS * 36);
+      if (py >= startY && py <= startY + tapeHeight) {
+        ctx.beginPath();
+        ctx.moveTo(tapeX, py);
+        ctx.lineTo(tapeX - (Math.abs(offsetS % 1.0) < 0.1 ? 7 : 4), py);
+        ctx.stroke();
+        if (Math.abs(offsetS % 1.0) < 0.1) {
+          ctx.fillText(`${markSpd.toFixed(1)}`, tapeX + 6, py + 3);
+        }
+      }
+    }
+
+    // Active Speed Pointer & Glass Badge
+    ctx.fillStyle = 'rgba(11, 13, 18, 0.88)';
+    ctx.fillRect(tapeX + 4, centerY - 10, 48, 20);
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.35)';
+    ctx.strokeRect(tapeX + 4, centerY - 10, 48, 20);
+
+    // Chevron pointing left at scale
+    ctx.beginPath();
+    ctx.moveTo(tapeX + 4, centerY);
+    ctx.lineTo(tapeX - 2, centerY - 3.5);
+    ctx.lineTo(tapeX - 2, centerY + 3.5);
+    ctx.closePath();
+    ctx.fillStyle = '#ffffff';
+    ctx.fill();
+
+    ctx.fillStyle = '#ffffff';
+    ctx.font = 'bold 10px "JetBrains Mono", monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText(`${spd.toFixed(1)}m/s`, tapeX + 28, centerY + 4);
+
+    ctx.font = '8px "JetBrains Mono", monospace';
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.4)';
+    ctx.fillText('SPEED', tapeX + 28, startY - 6);
+
+    ctx.restore();
+  }
+
+  _drawTacticalRadar(ctx, w, h) {
+    // Tactical Top-Down Radar / HSI Display (bottom left)
+    const rcx = 76;
+    const rcy = h - 76;
+    const radius = 54;
+
+    ctx.save();
+
+    // Radar Dark Glass Circular Backing
+    ctx.fillStyle = 'rgba(9, 11, 15, 0.85)';
+    ctx.beginPath();
+    ctx.arc(rcx, rcy, radius, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.25)';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+
+    // Concentric Range Rings (1m, 2m, 3m, 4m)
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.08)';
+    [0.25, 0.50, 0.75, 1.0].forEach((scale, idx) => {
+      ctx.beginPath();
+      ctx.arc(rcx, rcy, radius * scale, 0, Math.PI * 2);
+      ctx.stroke();
+    });
+
+    // Crosshairs
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.12)';
+    ctx.beginPath();
+    ctx.moveTo(rcx - radius, rcy);
+    ctx.lineTo(rcx + radius, rcy);
+    ctx.moveTo(rcx, rcy - radius);
+    ctx.lineTo(rcx, rcy + radius);
+    ctx.stroke();
+
+    // Drone Aircraft Icon at Center (North Facing)
+    ctx.strokeStyle = '#ffffff';
+    ctx.fillStyle = '#ffffff';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(rcx, rcy - 6);
+    ctx.lineTo(rcx - 4, rcy + 4);
+    ctx.lineTo(rcx, rcy + 2);
+    ctx.lineTo(rcx + 4, rcy + 4);
+    ctx.closePath();
+    ctx.fill();
+
+    // Target Blip & Heading Vector
+    if (this.tracking && this.tracking.target_detected) {
+      const dist = Math.min(4.0, Math.max(0.5, this.tracking.estimated_distance_m || 2.0));
+      const rPx = (dist / 4.0) * (radius - 4);
+
+      const pred = this.tracking.prediction;
+      const bearingDeg = pred ? pred.bearing_deg : 0.0;
+      const angleRad = ((bearingDeg - 90.0) * Math.PI) / 180.0;
+
+      const tx = rcx + rPx * Math.cos(angleRad);
+      const ty = rcy + rPx * Math.sin(angleRad);
+
+      // Proximity Alert Ring if distance < 1.0m
+      if (dist < 1.0) {
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.8)';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(tx, ty, 8 + Math.sin(Date.now() * 0.008) * 3, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+
+      // Target Blip Diamond
+      ctx.fillStyle = '#ffffff';
+      ctx.beginPath();
+      ctx.moveTo(tx, ty - 4);
+      ctx.lineTo(tx + 4, ty);
+      ctx.lineTo(tx, ty + 4);
+      ctx.lineTo(tx - 4, ty);
+      ctx.closePath();
+      ctx.fill();
+
+      // Velocity Vector from Target
+      const vel = this.tracking.velocity;
+      if (vel && (Math.abs(vel.vx) > 0.05 || Math.abs(vel.vy) > 0.05)) {
+        ctx.strokeStyle = '#ffffff';
+        ctx.lineWidth = 1.2;
+        ctx.beginPath();
+        ctx.moveTo(tx, ty);
+        ctx.lineTo(tx + vel.vx * 30, ty + vel.vy * 30);
+        ctx.stroke();
+      }
+
+      // Line of sight connection line
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.25)';
+      ctx.setLineDash([2, 2]);
+      ctx.beginPath();
+      ctx.moveTo(rcx, rcy);
+      ctx.lineTo(tx, ty);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+
+    // Label Badge
+    ctx.font = '7.5px "JetBrains Mono", monospace';
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.5)';
+    ctx.textAlign = 'center';
+    ctx.fillText('HSI RADAR 4m', rcx, rcy + radius + 11);
+
+    ctx.restore();
+  }
+
+  _drawPredictiveInterception(ctx, w, h) {
+    if (!this.tracking || !this.tracking.target_detected || !this.tracking.prediction) return;
+    const pred = this.tracking.prediction;
+    if (!pred.is_moving) return;
+
+    const p1 = pred.p1;
+    const p1x = p1.x * w;
+    const p1y = p1.y * h;
+
+    ctx.save();
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.45)';
+    ctx.lineWidth = 1.2;
+    ctx.setLineDash([3, 3]);
+
+    // Dashed trajectory vector
+    if (this.smoothBox) {
+      const cx = this.smoothBox.bx + this.smoothBox.bw / 2;
+      const cy = this.smoothBox.by + this.smoothBox.bh / 2;
+      ctx.beginPath();
+      ctx.moveTo(cx, cy);
+      ctx.lineTo(p1x, p1y);
+      ctx.stroke();
+    }
+
+    // Interception Diamond
+    ctx.setLineDash([]);
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(p1x, p1y - 6);
+    ctx.lineTo(p1x + 6, p1y);
+    ctx.lineTo(p1x, p1y + 6);
+    ctx.lineTo(p1x - 6, p1y);
+    ctx.closePath();
+    ctx.stroke();
+
+    ctx.font = '8px "JetBrains Mono", monospace';
+    ctx.fillStyle = '#ffffff';
+    ctx.textAlign = 'center';
+    ctx.fillText('INTCP T+1s', p1x, p1y - 9);
+
+    ctx.restore();
+  }
+
+  _drawGestureFeedback(ctx, w, h) {
+    if (!this.tracking || !this.tracking.gesture) return;
+    const g = this.tracking.gesture;
+    if (!g || g.type === "NONE") return;
+
+    ctx.save();
+
+    // Map gesture icons
+    const icons = {
+      "PEACE_SNAP": "✌️",
+      "PALM_HOVER": "✋",
+      "THUMBS_LOCK": "👍",
+      "CROSSED_LAND": "🙅",
+      "POINT_LEFT": "👈",
+      "POINT_RIGHT": "👉"
+    };
+    const icon = icons[g.type] || "⚡";
+    const label = `${icon} ${g.label}`;
+
+    // Floating High-Tech Gesture Indicator Pill
+    const badgeW = 160;
+    const badgeH = 28;
+    const bx = (w - badgeW) / 2;
+    const by = h - 68;
+
+    ctx.fillStyle = 'rgba(11, 13, 18, 0.92)';
+    ctx.fillRect(bx, by, badgeW, badgeH);
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth = 1.5;
+    ctx.strokeRect(bx, by, badgeW, badgeH);
+
+    ctx.font = 'bold 10px "JetBrains Mono", monospace';
+    ctx.fillStyle = '#ffffff';
+    ctx.textAlign = 'center';
+    ctx.fillText(label, w / 2, by + 14);
+
+    // Hold Progress Bar (0.0 to 1.0)
+    const holdPct = Math.min(1.0, (g.hold_time || 0) / 1.0);
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.15)';
+    ctx.fillRect(bx + 10, by + 20, badgeW - 20, 3);
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(bx + 10, by + 20, (badgeW - 20) * holdPct, 3);
+
+    // Peace Snap Countdown Shutter Effect
+    if (g.type === "PEACE_SNAP" && this.smoothBox) {
+      const cx = this.smoothBox.bx + this.smoothBox.bw / 2;
+      const cy = this.smoothBox.by + this.smoothBox.bh / 2;
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(cx, cy, 32, -Math.PI / 2, -Math.PI / 2 + holdPct * Math.PI * 2);
+      ctx.stroke();
+
+      ctx.font = 'bold 12px "JetBrains Mono", monospace';
+      ctx.fillStyle = '#ffffff';
+      ctx.textAlign = 'center';
+      const secLeft = Math.max(1, Math.ceil((1.0 - holdPct) * 3));
+      ctx.fillText(`SNAP IN ${secLeft}`, cx, cy + 45);
+    }
+
+    ctx.restore();
+  }
+
+  _drawOcclusionGhost(ctx, w, h) {
+    if (!this.tracking || !this.tracking.ghost_target || !this.tracking.ghost_target.active) return;
+    const ghost = this.tracking.ghost_target;
+    const gx = ghost.center[0] * w;
+    const gy = ghost.center[1] * h;
+    const bw = 80;
+    const bh = 140;
+
+    ctx.save();
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.45)';
+    ctx.lineWidth = 1.2;
+    ctx.setLineDash([4, 4]);
+    ctx.strokeRect(gx - bw / 2, gy - bh / 2, bw, bh);
+
+    ctx.font = '8px "JetBrains Mono", monospace';
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.6)';
+    ctx.textAlign = 'center';
+    ctx.fillText('PREDICTIVE GHOST', gx, gy - bh / 2 - 6);
+    ctx.fillText(`LOST: ${ghost.time_lost_sec}s`, gx, gy + bh / 2 + 12);
+    ctx.restore();
+  }
 }
+
