@@ -43,6 +43,9 @@ last_rc_output: Dict[str, int] = {"roll": 0, "pitch": 0, "throttle": 0, "yaw": 0
 async def lifespan(app: FastAPI):
     # Startup: Connect to simulator or drone
     print("[APP] Starting Drone Follow Server...")
+    health = flight_db.verify_integrity()
+    print(f"[APP] Flight Database Status: {health.get('status')} (Journal: {health.get('journal_mode')})")
+    
     drone_manager.connect(prefer_physical=False)
     # Start background loop for follow control
     asyncio.create_task(autonomous_control_loop())
@@ -51,6 +54,14 @@ async def lifespan(app: FastAPI):
     print("[APP] Shutting down...")
     if flight_db.active_run:
         flight_db.end_run(status="SHUTDOWN")
+    
+    # Durability: Checkpoint WAL and capture final snapshot backup
+    flight_db.checkpoint_wal()
+    try:
+        flight_db.create_backup()
+    except Exception:
+        pass
+        
     drone_manager.stop()
 
 
@@ -487,6 +498,57 @@ def clear_flight_runs():
     """Clears all historical flight records."""
     flight_db.clear_all()
     return {"status": "cleared"}
+
+
+# -------------------------------------------------------------
+# Database Health & Backup Engine Endpoints (ACID & Durability)
+# -------------------------------------------------------------
+
+class RestoreRequest(BaseModel):
+    backup_filename: str
+
+@app.get("/api/db/health")
+def get_database_health():
+    """Returns detailed SQLite ACID status, integrity checks, and backup counts."""
+    health = flight_db.verify_integrity()
+    backups = flight_db.list_backups()
+    stats = flight_db.get_summary_stats()
+    return {
+        "status": "HEALTHY" if health.get("healthy") else "DEGRADED",
+        "database": health,
+        "total_runs": stats.get("total_missions", 0),
+        "backup_count": len(backups),
+        "latest_backup": backups[0] if backups else None
+    }
+
+@app.post("/api/db/backup")
+def trigger_database_backup():
+    """Creates an atomic point-in-time online snapshot backup of SQLite and profiles."""
+    try:
+        db_snap = flight_db.create_backup()
+        prof_snap = profile_store.backup_profiles()
+        return {
+            "status": "success",
+            "message": "Atomic snapshot backup successfully created.",
+            "database_backup": db_snap,
+            "profiles_backup": prof_snap
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Backup failed: {str(e)}")
+
+@app.get("/api/db/backups")
+def list_database_backups():
+    """Returns list of all verified point-in-time backup snapshots."""
+    backups = flight_db.list_backups()
+    return {"backups": backups, "count": len(backups)}
+
+@app.post("/api/db/restore")
+def restore_database_backup(req: RestoreRequest):
+    """Restores database from a designated point-in-time snapshot backup."""
+    success = flight_db.restore_backup(req.backup_filename)
+    if not success:
+        raise HTTPException(status_code=400, detail="Failed to restore backup snapshot. Verify filename exists and is valid.")
+    return {"status": "restored", "filename": req.backup_filename}
 
 
 # -------------------------------------------------------------

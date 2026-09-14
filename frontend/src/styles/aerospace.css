@@ -1679,4 +1679,32 @@ body::after {
   color: #ffffff;
 }
 
+/* Database Health & ACID Status Pill */
+.db-health-pill {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--border-subtle);
+  border-radius: 4px;
+  padding: 3px 8px;
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  letter-spacing: 0.5px;
+  color: var(--text-secondary);
+}
+
+.db-health-pill .status-indicator {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: #22c55e;
+  box-shadow: 0 0 6px #22c55e;
+}
+
+.db-health-pill.degraded .status-indicator {
+  background: #f59e0b;
+  box-shadow: 0 0 6px #f59e0b;
+}
+
 

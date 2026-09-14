@@ -503,6 +503,13 @@
             <div class="wizard-subtitle">PERSISTENT RUNS DATABASE // TIME-SERIES AVIONICS RECORDER</div>
           </div>
           <div style="display: flex; align-items: center; gap: 8px;">
+            <div id="db-health-badge" class="db-health-pill" title="SQLite ACID Status: WAL Mode, Foreign Keys, Atomic Transactions">
+              <span class="status-indicator"></span>
+              <span id="db-health-text">ACID: WAL (HEALTHY)</span>
+            </div>
+            <button id="btn-create-db-backup" class="btn-secondary" style="padding: 4px 10px; font-size: 10px; border-color: rgba(255,255,255,0.4); color: #ffffff;" title="Create an atomic point-in-time snapshot backup">
+              <span>SNAPSHOT BACKUP</span>
+            </button>
             <button id="btn-refresh-runs" class="btn-secondary" style="padding: 4px 10px; font-size: 10px;" title="Refresh mission list">
               <span>REFRESH</span>
             </button>

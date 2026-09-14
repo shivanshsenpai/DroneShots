@@ -72,6 +72,41 @@ export class RunsModal {
       });
     }
 
+    // ACID Database Health & Snapshot Backup
+    this.btnBackup = this.modalEl.querySelector('#btn-create-db-backup');
+    this.healthBadge = this.modalEl.querySelector('#db-health-badge');
+    this.healthText = this.modalEl.querySelector('#db-health-text');
+
+    if (this.btnBackup) {
+      this.btnBackup.addEventListener('click', async () => {
+        soundFX.playClick();
+        const originalText = this.btnBackup.innerHTML;
+        this.btnBackup.innerHTML = '<span>SAVING...</span>';
+        try {
+          const res = await fetch('/api/db/backup', { method: 'POST' });
+          const data = await res.json();
+          if (data.status === 'success') {
+            soundFX.playLock();
+            this.btnBackup.innerHTML = '<span>SNAPSHOT CREATED ✓</span>';
+            setTimeout(() => {
+              if (this.btnBackup) this.btnBackup.innerHTML = originalText;
+            }, 2500);
+            this.updateHealthBadge();
+          } else {
+            this.btnBackup.innerHTML = '<span>FAILED</span>';
+            setTimeout(() => {
+              if (this.btnBackup) this.btnBackup.innerHTML = originalText;
+            }, 2000);
+          }
+        } catch (e) {
+          this.btnBackup.innerHTML = '<span>ERROR</span>';
+          setTimeout(() => {
+            if (this.btnBackup) this.btnBackup.innerHTML = originalText;
+          }, 2000);
+        }
+      });
+    }
+
     // Close on backdrop click outside card
     this.modalEl.addEventListener('click', (e) => {
       if (e.target === this.modalEl) {
@@ -104,7 +139,26 @@ export class RunsModal {
     soundFX.playClick();
   }
 
+  async updateHealthBadge() {
+    if (!this.healthBadge || !this.healthText) return;
+    try {
+      const res = await fetch('/api/db/health');
+      if (!res.ok) return;
+      const data = await res.json();
+      if (data.status === 'HEALTHY') {
+        this.healthBadge.className = 'db-health-pill';
+        const jm = (data.database && data.database.journal_mode) ? data.database.journal_mode.toUpperCase() : 'WAL';
+        const snaps = data.backup_count || 0;
+        this.healthText.innerText = `ACID: ${jm} (OK) | ${snaps} SNAPS`;
+      } else {
+        this.healthBadge.className = 'db-health-pill degraded';
+        this.healthText.innerText = 'ACID: DEGRADED';
+      }
+    } catch (e) {}
+  }
+
   async loadRuns() {
+    this.updateHealthBadge();
     try {
       const res = await fetch('/api/db/runs');
       if (!res.ok) return;

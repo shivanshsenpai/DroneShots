@@ -40,8 +40,11 @@ Thumbs.db
 .vscode/
 .idea/
 
-# Snapshots
+# Snapshots & Backups
 data/snapshots/
+data/backups/
 *.db
+*.db-*
+*.tmp
 
 
